@@ -1,0 +1,43 @@
+{
+  "evaluation_date": "2026-08-21",
+  "dataset": "assumption-based-state-rich-synthetic",
+  "model_id": "openai.gpt-5.6-sol",
+  "cases": 200,
+  "synthetic_users": 20,
+  "generated_observed_purchases": 10,
+  "generated_observed_purchase_rate": 0.05,
+  "execution": {
+    "successful_cases": 200,
+    "failed_cases": 0,
+    "fallbacks": 0,
+    "schema_success_rate": 1.0,
+    "mean_latency_seconds": 29.3199,
+    "p95_latency_seconds": 49.9578
+  },
+  "primary_observed_expected_gaps": {
+    "scalar_purchase": {
+      "observed_count": 10,
+      "expected_count": 15.079277,
+      "count_gap": 5.079277,
+      "observed_rate": 0.05,
+      "expected_rate": 0.07539638,
+      "rate_gap_percentage_points": 2.539638
+    },
+    "trajectory_purchase": {
+      "observed_count": 10,
+      "expected_count": 11.80274682,
+      "count_gap": 1.80274682,
+      "observed_rate": 0.05,
+      "expected_rate": 0.05901373,
+      "rate_gap_percentage_points": 0.901373
+    },
+    "exposure_click": {
+      "observed_count": 30,
+      "expected_count": 40.50275736,
+      "count_gap": 10.50275736,
+      "observed_rate": 0.16129032,
+      "expected_rate": 0.21775676,
+      "rate_gap_percentage_points": 5.646644
+    }
+  }
+}

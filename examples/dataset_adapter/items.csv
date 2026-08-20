@@ -1,0 +1,5 @@
+sku,product_type,category_list,price,discount,components,character,event_code
+sku-currency,item,currency|convenience,9900,0.10,,mage,event-summer
+sku-upgrade,item,upgrade,14900,0.00,,mage,event-summer
+sku-cosmetic,item,cosmetic|collectible,12900,0.20,,archer,event-style
+sku-starter-bundle,bundle,bundle|upgrade|currency,19900,0.15,sku-currency:2|sku-upgrade:1,mage,event-summer

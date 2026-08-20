@@ -1,0 +1,32 @@
+{
+  "phase": "internal_eval_preparation",
+  "output_dir": "artifacts/dataset/protocol",
+  "users": 20,
+  "cases": 500,
+  "purchase_rate": 0.054,
+  "answer_key_created": true,
+  "game_state": {
+    "coverage": {
+      "currency_balance": 1.0,
+      "progression_need": 1.0,
+      "recent_failure_intensity": 1.0,
+      "inventory_overlap": 1.0,
+      "event_urgency": 1.0,
+      "purchase_cooldown": 1.0,
+      "current_goals": 1.0,
+      "owned_item_ids": 1.0
+    },
+    "unique_values": {
+      "currency_balance": 3443,
+      "progression_need": 3864,
+      "recent_failure_intensity": 3834,
+      "inventory_overlap": 4,
+      "event_urgency": 1661,
+      "purchase_cooldown": 3851,
+      "current_goals": 47,
+      "owned_item_ids": 78
+    }
+  },
+  "aws_called": false,
+  "model_called": false
+}

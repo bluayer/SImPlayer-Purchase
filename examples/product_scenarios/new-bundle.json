@@ -1,0 +1,45 @@
+{
+  "request_id": "new-bundle-001",
+  "user": {
+    "user_id": "user-42",
+    "persona_summary": "성장 상품을 선호하고 재화 상품을 반복 구매한 사용자",
+    "price_sensitivity": 0.6,
+    "category_preferences": {
+      "bundle": 0.7,
+      "upgrade": 0.9,
+      "currency": 0.8
+    }
+  },
+  "target_product": {
+    "product_id": "summer-growth-bundle",
+    "product_type": "bundle",
+    "categories": [
+      "bundle",
+      "upgrade",
+      "currency"
+    ],
+    "price": 29900,
+    "discount_rate": 0.15,
+    "components": [
+      {
+        "product_id": "sku-currency",
+        "quantity": 2
+      },
+      {
+        "product_id": "sku-upgrade",
+        "quantity": 1
+      }
+    ],
+    "attributes": {
+      "character": "mage",
+      "event_id": "summer-2026",
+      "repeat_purchase_type": "one_time"
+    }
+  },
+  "exposure_scenario": {
+    "surface": "store_home",
+    "session_fatigue": 0.1,
+    "budget_reference": 40000,
+    "timestamp": "2026-08-19T10:00:00+09:00"
+  }
+}

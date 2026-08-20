@@ -1,0 +1,193 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Isolated S3 bulk-loader control plane for the simulator behavior graph
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: purchase-behavior-sim
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  RouteTableIds:
+    Type: CommaDelimitedList
+  CreateS3GatewayEndpoint:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+  ClientSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  NeptuneEndpoint:
+    Type: String
+  NeptuneClusterResourceId:
+    Type: String
+  DataBucketName:
+    Type: String
+
+Conditions:
+  CreateS3Endpoint: !Equals [!Ref CreateS3GatewayEndpoint, "true"]
+
+Resources:
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreateS3Endpoint
+    Properties:
+      VpcEndpointType: Gateway
+      VpcId: !Ref VpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      RouteTableIds: !Ref RouteTableIds
+
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref DataBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+
+  NeptuneLoadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-neptune-load"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ReadSyntheticGraph
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub "${DataBucket.Arn}/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt DataBucket.Arn
+
+  LoaderFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-neptune-loader-function"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+      Policies:
+        - PolicyName: ControlNeptuneLoader
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - neptune-db:CancelLoaderJob
+                  - neptune-db:GetLoaderJobStatus
+                  - neptune-db:ListLoaderJobs
+                  - neptune-db:StartLoaderJob
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:neptune-db:${AWS::Region}:${AWS::AccountId}:${ClusterResourceId}/*"
+                  - ClusterResourceId: !Ref NeptuneClusterResourceId
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt NeptuneLoadRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: rds.amazonaws.com
+
+  LoaderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-neptune-loader"
+      Runtime: python3.14
+      Handler: index.handler
+      Role: !GetAtt LoaderFunctionRole.Arn
+      Timeout: 900
+      MemorySize: 256
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref ClientSecurityGroupId
+        SubnetIds: !Ref SubnetIds
+      Environment:
+        Variables:
+          DATA_BUCKET: !Ref DataBucket
+          LOAD_ROLE_ARN: !GetAtt NeptuneLoadRole.Arn
+          NEPTUNE_ENDPOINT: !Ref NeptuneEndpoint
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+
+          client = boto3.client(
+              "neptunedata",
+              endpoint_url=f"https://{os.environ['NEPTUNE_ENDPOINT']}:8182",
+          )
+
+          def handler(event, context):
+              action = event.get("action", "start")
+              if action == "start":
+                  prefix = event.get("prefix", "behavior-graph/current")
+                  response = client.start_loader_job(
+                      source=f"s3://{os.environ['DATA_BUCKET']}/{prefix}/",
+                      format="opencypher",
+                      s3BucketRegion=os.environ.get("AWS_REGION", "us-east-1"),
+                      iamRoleArn=os.environ["LOAD_ROLE_ARN"],
+                      mode=event.get("mode", "NEW"),
+                      failOnError=True,
+                      parallelism=event.get("parallelism", "MEDIUM"),
+                      queueRequest=True,
+                      userProvidedEdgeIds=True,
+                  )
+                  return {
+                      "status": response["status"],
+                      "payload": response["payload"],
+                  }
+              if action == "status":
+                  response = client.get_loader_job_status(
+                      loadId=event["loadId"],
+                      details=True,
+                      errors=True,
+                  )
+                  return {
+                      "status": response["status"],
+                      "payload": response["payload"],
+                  }
+              if action == "list":
+                  response = client.list_loader_jobs(
+                      includeQueuedLoads=True,
+                      limit=20,
+                  )
+                  return {
+                      "status": response["status"],
+                      "payload": response["payload"],
+                  }
+              raise ValueError(f"unsupported action: {action}")
+
+Outputs:
+  DataBucketName:
+    Value: !Ref DataBucket
+  LoadRoleArn:
+    Value: !GetAtt NeptuneLoadRole.Arn
+  LoaderFunctionName:
+    Value: !Ref LoaderFunction

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "purchase-behavior-simulator"
+version = "0.1.0"
+description = "SimPlayer Purchase: state-aware game purchase behavior simulator technical prototype"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "bedrock-agentcore==1.21.0",
+  "boto3==1.43.73",
+  "openai==2.54.0",
+  "pydantic==2.13.4",
+  "strands-agents[openai]==1.52.0",
+]
+
+[project.scripts]
+purchase-behavior-simulator = "purchase_behavior_simulator.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["purchase_behavior_simulator*"]
+exclude = ["build*", "tests*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+purchase_behavior_simulator = ["action_graphs/*.json"]

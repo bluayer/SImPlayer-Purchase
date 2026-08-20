@@ -1,0 +1,78 @@
+{
+  "generator": "state-rich-scenario-generator-v3",
+  "config": {
+    "users": 20,
+    "items": 60,
+    "impressions": 4000,
+    "days": 90,
+    "latent_dimensions": 12,
+    "candidate_pool_size": 48,
+    "seed": 20260820,
+    "start_time": "2026-01-01T00:00:00+00:00"
+  },
+  "counts": {
+    "users": 20,
+    "items": 60,
+    "scenarios": 4000,
+    "oracle_rows": 4000
+  },
+  "state_coverage": {
+    "progression_need": 1.0,
+    "recent_failure_intensity": 1.0,
+    "event_urgency": 1.0,
+    "current_goals": 1.0
+  },
+  "state_unique_values": {
+    "progression_need": 3835,
+    "recent_failure_intensity": 3734,
+    "event_urgency": 1661,
+    "current_goals": 47
+  },
+  "splits": {
+    "train": 2799,
+    "validation": 623,
+    "test": 578
+  },
+  "exposure_policies": {
+    "popular": 1016,
+    "exploration": 498,
+    "personalized": 2486
+  },
+  "quality_gates": {
+    "all_temporal_splits_present": true,
+    "valid_exposure_propensity": true,
+    "complete_exogenous_state": true,
+    "non_degenerate_exogenous_state": true,
+    "oracle_spec_only": true,
+    "all_passed": true
+  },
+  "phase": "generation",
+  "generation_session_id": "assumptions-generation-20260820",
+  "labeling_session_id": null,
+  "assumptions": {
+    "schema_version": "state-rich-assumptions-v1",
+    "discount_probability": 0.3,
+    "discount_levels": [0.1, 0.15, 0.2, 0.3, 0.4],
+    "bundle_category_weight": 1.0,
+    "bundle_size_median": 4,
+    "returning_player_probability": 0.65,
+    "weekend_probability": 0.2857142857142857,
+    "special_event_boost_probability": 0.1,
+    "session_product_views_median": 10.0,
+    "session_product_views_p90": 30.0,
+    "session_duration_seconds_median": 900.0,
+    "session_duration_seconds_p90": 3600.0,
+    "baseline_exit_pressure": 0.08,
+    "purchase_cooldown_decay_hours": 72.0,
+    "initial_owned_item_count_median": 4.0,
+    "initial_owned_item_count_p90": 12.0
+  },
+  "files": {
+    "users.jsonl": "d0cdc514513053d52e2941432b9e41eb3180b0b87fd00926f5914df9ee594cf2",
+    "items.jsonl": "be9e999eb64ac8911ce33bcfc3e184a032539171bb10baec20102f2d6987b033",
+    "scenarios.jsonl": "cc31a4b0d6ff52730110523e41df7e1091762eda1092e6173b22bd88b607b4dd",
+    "oracle/oracle.jsonl": "4c50528ae5fb72133d0c8ec9ec8343ca37be4fd379258c01d11a017639299243",
+    "neptune/nodes.csv": "fd1df19a736617872b3805365c9872399e76a4ef46fda64eec9f002e5ae47f0c",
+    "neptune/static_edges.csv": "a7834e014198e3e04eae406e9630469c6a3a1ceb7e3eca51b5867a100ec73471"
+  }
+}

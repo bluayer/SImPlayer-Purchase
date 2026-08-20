@@ -1,0 +1,61 @@
+{
+  "run_id": "adapter-labeled-20260819-ad48655edb66",
+  "users": 20,
+  "history_fraction": 0.5,
+  "history_impressions_per_user": 50,
+  "candidate_cases": 500,
+  "ratio_specs": {
+    "1:1": [10, 10],
+    "1:3": [5, 15],
+    "1:9": [2, 18]
+  },
+  "natural_metrics": {
+    "protocol": {
+      "adapter_schema": "simuser.canonical-dataset.v2",
+      "dataset_name": "labeled",
+      "sampling": "uniform-within-user temporal holdout",
+      "cases_per_user": 25,
+      "complete_exposure": true,
+      "purchase_rate": 0.054,
+      "oracle_available": true,
+      "validation": {
+        "dataset_name": "labeled",
+        "users": 20,
+        "items": 60,
+        "impressions": 4000,
+        "complete_exposure": true,
+        "purchases": 177,
+        "clicks": 796,
+        "action_counts": {
+          "ITEM_DETAIL:BACK": 906,
+          "ITEM_DETAIL:PURCHASE": 165,
+          "ITEM_EXPOSURE:CLICK": 731,
+          "ITEM_EXPOSURE:PURCHASE_NOW": 12,
+          "ITEM_EXPOSURE:SKIP": 2917
+        },
+        "game_state": {
+          "coverage": {
+            "currency_balance": 1.0,
+            "progression_need": 1.0,
+            "recent_failure_intensity": 1.0,
+            "inventory_overlap": 1.0,
+            "event_urgency": 1.0,
+            "purchase_cooldown": 1.0,
+            "current_goals": 1.0,
+            "owned_item_ids": 1.0
+          },
+          "unique_values": {
+            "currency_balance": 3443,
+            "progression_need": 3864,
+            "recent_failure_intensity": 3834,
+            "inventory_overlap": 4,
+            "event_urgency": 1661,
+            "purchase_cooldown": 3851,
+            "current_goals": 47,
+            "owned_item_ids": 78
+          }
+        }
+      }
+    }
+  }
+}

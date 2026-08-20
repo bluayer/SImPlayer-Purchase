@@ -1,0 +1,34 @@
+{
+  "request_id": "price-change-001",
+  "user": {
+    "user_id": "user-42",
+    "persona_summary": "성장 효율을 중시하지만 가격 변화에 민감함",
+    "price_sensitivity": 0.9,
+    "category_preferences": {
+      "upgrade": 0.9
+    }
+  },
+  "target_product": {
+    "product_id": "sku-upgrade",
+    "product_type": "item",
+    "categories": [
+      "upgrade"
+    ],
+    "price": 14900,
+    "discount_rate": 0.0,
+    "attributes": {
+      "character": "mage",
+      "event_id": "event-summer"
+    }
+  },
+  "product_scenario": {
+    "price_override": 9900,
+    "discount_rate_override": 0.34
+  },
+  "exposure_scenario": {
+    "surface": "store_home",
+    "session_fatigue": 0.2,
+    "budget_reference": 20000,
+    "timestamp": "2026-08-19T10:00:00+09:00"
+  }
+}

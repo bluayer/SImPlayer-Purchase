@@ -1,0 +1,245 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Private Neptune Serverless cluster for the purchase behavior simulator prototype
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: purchase-behavior-sim
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  ClientSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: Optional existing AgentCore Runtime security group; leave blank to create one
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  MinCapacity:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 128
+  MaxCapacity:
+    Type: Number
+    Default: 16
+    MinValue: 2.5
+    MaxValue: 128
+  EnableDeletionProtection:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Keep enabled except during an explicitly approved teardown
+  EnableAuditLogExport:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Publish Neptune audit logs to CloudWatch Logs
+  KmsKeyId:
+    Type: String
+    Default: ''
+    Description: Optional customer-managed KMS key ARN; blank uses AWS managed encryption
+  EnableReader:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Create a dedicated reader only after measured read concurrency justifies it
+  CreateBedrockRuntimeEndpoint:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Create the interface endpoint required by a VPC runtime without NAT
+  CreateAgentCoreDataEndpoint:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Create the AgentCore data-plane endpoint used by Memory
+  CreateBedrockMantleEndpoint:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Create the Bedrock Mantle endpoint used by OpenAI models
+  BedrockMantleSubnetIds:
+    Type: String
+    Default: ''
+    Description: Subnets in Availability Zones supported by Bedrock Mantle
+
+Conditions:
+  CreateReader: !Equals [!Ref EnableReader, 'true']
+  ProtectCluster: !Equals [!Ref EnableDeletionProtection, 'true']
+  ExportAuditLogs: !Equals [!Ref EnableAuditLogExport, 'true']
+  UseCustomerKmsKey: !Not [!Equals [!Ref KmsKeyId, '']]
+  UseExternalClientSecurityGroup: !Not [!Equals [!Ref ClientSecurityGroupId, '']]
+  CreateClientSecurityGroup: !Equals [!Ref ClientSecurityGroupId, '']
+  CreateBedrockEndpoint: !Equals [!Ref CreateBedrockRuntimeEndpoint, 'true']
+  CreateAgentCoreEndpoint: !Equals [!Ref CreateAgentCoreDataEndpoint, 'true']
+  CreateMantleEndpoint: !Equals [!Ref CreateBedrockMantleEndpoint, 'true']
+  CreateAnyInterfaceEndpoint: !Or
+    - !Equals [!Ref CreateBedrockRuntimeEndpoint, 'true']
+    - !Equals [!Ref CreateAgentCoreDataEndpoint, 'true']
+    - !Equals [!Ref CreateBedrockMantleEndpoint, 'true']
+
+Resources:
+  AgentCoreRuntimeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateClientSecurityGroup
+    Properties:
+      GroupDescription: Egress security group for the purchase behavior simulator Runtime
+      VpcId: !Ref VpcId
+
+  NeptuneSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Neptune access from AgentCore Runtime
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8182
+          ToPort: 8182
+          SourceSecurityGroupId: !If
+            - UseExternalClientSecurityGroup
+            - !Ref ClientSecurityGroupId
+            - !Ref AgentCoreRuntimeSecurityGroup
+
+  BedrockEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateAnyInterfaceEndpoint
+    Properties:
+      GroupDescription: HTTPS access from the simulator Runtime to AWS service endpoints
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !If
+            - UseExternalClientSecurityGroup
+            - !Ref ClientSecurityGroupId
+            - !Ref AgentCoreRuntimeSecurityGroup
+
+  BedrockRuntimeEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreateBedrockEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref BedrockEndpointSecurityGroup
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.bedrock-runtime'
+      SubnetIds: !Ref SubnetIds
+      VpcEndpointType: Interface
+      VpcId: !Ref VpcId
+
+  AgentCoreDataEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreateAgentCoreEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref BedrockEndpointSecurityGroup
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.bedrock-agentcore'
+      SubnetIds: !Ref SubnetIds
+      VpcEndpointType: Interface
+      VpcId: !Ref VpcId
+
+  BedrockMantleEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreateMantleEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref BedrockEndpointSecurityGroup
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.bedrock-mantle'
+      SubnetIds: !Split [',', !Ref BedrockMantleSubnetIds]
+      VpcEndpointType: Interface
+      VpcId: !Ref VpcId
+
+  NeptuneSubnetGroup:
+    Type: AWS::Neptune::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private subnets for Neptune Serverless
+      SubnetIds: !Ref SubnetIds
+
+  NeptuneCluster:
+    Type: AWS::Neptune::DBCluster
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBClusterIdentifier: !Sub '${EnvironmentName}-cluster'
+      DBSubnetGroupName: !Ref NeptuneSubnetGroup
+      IamAuthEnabled: true
+      StorageEncrypted: true
+      KmsKeyId: !If
+        - UseCustomerKmsKey
+        - !Ref KmsKeyId
+        - !Ref AWS::NoValue
+      DeletionProtection: !If
+        - ProtectCluster
+        - true
+        - false
+      EnableCloudwatchLogsExports: !If
+        - ExportAuditLogs
+        - [audit]
+        - !Ref AWS::NoValue
+      BackupRetentionPeriod: 7
+      ServerlessScalingConfiguration:
+        MinCapacity: !Ref MinCapacity
+        MaxCapacity: !Ref MaxCapacity
+      VpcSecurityGroupIds:
+        - !Ref NeptuneSecurityGroup
+
+  NeptuneWriter:
+    Type: AWS::Neptune::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref NeptuneCluster
+      DBInstanceIdentifier: !Sub '${EnvironmentName}-writer'
+      DBInstanceClass: db.serverless
+
+  NeptuneReader:
+    Type: AWS::Neptune::DBInstance
+    Condition: CreateReader
+    DependsOn: NeptuneWriter
+    Properties:
+      DBClusterIdentifier: !Ref NeptuneCluster
+      DBInstanceIdentifier: !Sub '${EnvironmentName}-reader'
+      DBInstanceClass: db.serverless
+
+Outputs:
+  ClusterId:
+    Value: !Ref NeptuneCluster
+  WriterEndpoint:
+    Value: !GetAtt NeptuneCluster.Endpoint
+  ReaderEndpoint:
+    Condition: CreateReader
+    Value: !GetAtt NeptuneCluster.ReadEndpoint
+  RuntimeEndpoint:
+    Value: !If
+      - CreateReader
+      - !GetAtt NeptuneCluster.ReadEndpoint
+      - !GetAtt NeptuneCluster.Endpoint
+  Port:
+    Value: !GetAtt NeptuneCluster.Port
+  SecurityGroupId:
+    Value: !Ref NeptuneSecurityGroup
+  ClientSecurityGroupId:
+    Value: !If
+      - UseExternalClientSecurityGroup
+      - !Ref ClientSecurityGroupId
+      - !Ref AgentCoreRuntimeSecurityGroup
+  BedrockRuntimeEndpointId:
+    Condition: CreateBedrockEndpoint
+    Value: !Ref BedrockRuntimeEndpoint
+  AgentCoreDataEndpointId:
+    Condition: CreateAgentCoreEndpoint
+    Value: !Ref AgentCoreDataEndpoint
+  BedrockMantleEndpointId:
+    Condition: CreateMantleEndpoint
+    Value: !Ref BedrockMantleEndpoint

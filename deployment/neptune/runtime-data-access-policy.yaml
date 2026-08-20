@@ -1,0 +1,63 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Least-privilege data-plane policy for the behavior simulator Runtime
+
+Parameters:
+  RuntimeRoleName:
+    Type: String
+  NeptuneClusterResourceId:
+    Type: String
+  MemoryId:
+    Type: String
+
+Resources:
+  RuntimeDataAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-policy'
+      Roles:
+        - !Ref RuntimeRoleName
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ReadBehaviorGraph
+            Effect: Allow
+            Action:
+              - neptune-db:GetEngineStatus
+              - neptune-db:ReadDataViaQuery
+            Resource: !Sub
+              - 'arn:${AWS::Partition}:neptune-db:${AWS::Region}:${AWS::AccountId}:${ClusterResourceId}/*'
+              - ClusterResourceId: !Ref NeptuneClusterResourceId
+          - Sid: SearchActorEpisodicMemoryTree
+            Effect: Allow
+            Action:
+              - bedrock-agentcore:ListMemoryRecords
+              - bedrock-agentcore:RetrieveMemoryRecords
+            Resource: !Sub 'arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:memory/${MemoryId}'
+            Condition:
+              StringLike:
+                bedrock-agentcore:namespacePath:
+                  - '/episodes/*'
+          - Sid: PersistValidatedEpisodicRecords
+            Effect: Allow
+            Action:
+              - bedrock-agentcore:BatchCreateMemoryRecords
+            Resource: !Sub 'arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:memory/${MemoryId}'
+          - Sid: InvokeBedrockMantleDefaultProject
+            Effect: Allow
+            Action:
+              - bedrock-mantle:CreateInference
+            Resource: !Sub 'arn:${AWS::Partition}:bedrock-mantle:${AWS::Region}:${AWS::AccountId}:project/default'
+          - Sid: UseShortTermBedrockMantleBearerToken
+            Effect: Allow
+            Action:
+              - bedrock-mantle:CallWithBearerToken
+            # This permission-only action has no resource type. Restrict it
+            # to short-term tokens; model inference remains project-scoped.
+            Resource: '*'
+            Condition:
+              StringEquals:
+                bedrock-mantle:bearerTokenType: SHORT_TERM
+
+Outputs:
+  PolicyName:
+    Value: !Sub '${AWS::StackName}-policy'

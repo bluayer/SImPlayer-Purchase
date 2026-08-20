@@ -1,0 +1,145 @@
+{
+  "$schema": "https://schema.agentcore.aws.dev/v1/agentcore.json",
+  "name": "BehaviorSim",
+  "version": 1,
+  "managedBy": "CDK",
+  "tags": {
+    "agentcore:created-by": "agentcore-cli",
+    "agentcore:project-name": "BehaviorSim"
+  },
+  "runtimes": [
+    {
+      "name": "PurchaseBehaviorSimulator",
+      "build": "CodeZip",
+      "entrypoint": "purchase_behavior_simulator/agentcore_app.py",
+      "codeLocation": "../../src/",
+      "runtimeVersion": "PYTHON_3_14",
+      "envVars": [
+        {
+          "name": "AWS_REGION",
+          "value": "us-east-1"
+        },
+        {
+          "name": "BEDROCK_MODEL_ID",
+          "value": "replace-me-model-id"
+        },
+        {
+          "name": "PURCHASE_BEHAVIOR_PROBABILITY_MAX_TOKENS",
+          "value": "1100"
+        },
+        {
+          "name": "PURCHASE_BEHAVIOR_ACTION_MAX_TOKENS",
+          "value": "1800"
+        },
+        {
+          "name": "PURCHASE_BEHAVIOR_CRITIC_MAX_TOKENS",
+          "value": "1400"
+        },
+        {
+          "name": "PURCHASE_BEHAVIOR_SELF_ASK_MAX_TOKENS",
+          "value": "500"
+        },
+        {
+          "name": "PURCHASE_BEHAVIOR_REFLECTION_MAX_TOKENS",
+          "value": "700"
+        },
+        {
+          "name": "PURCHASE_BEHAVIOR_REFLECTION_MODE",
+          "value": "deterministic"
+        },
+        {
+          "name": "PURCHASE_BEHAVIOR_MODEL_TIMEOUT_SECONDS",
+          "value": "120"
+        },
+        {
+          "name": "PURCHASE_BEHAVIOR_ACTION_GRAPH",
+          "value": "game-store-purchase.json"
+        },
+        {
+          "name": "ROLLOUT_LOGIT_WEIGHT",
+          "value": "0.1"
+        },
+        {
+          "name": "KG_LOGIT_WEIGHT",
+          "value": "0.0"
+        },
+        {
+          "name": "FUSION_LOGIT_SHRINK",
+          "value": "0.5"
+        },
+        {
+          "name": "FUSION_PRIOR_ANCHOR",
+          "value": "0.12"
+        },
+        {
+          "name": "NEPTUNE_ENDPOINT",
+          "value": "replace-me.cluster-000000000000.us-east-1.neptune.amazonaws.com"
+        }
+      ],
+      "networkMode": "VPC",
+      "networkConfig": {
+        "subnets": ["subnet-00000000000000000", "subnet-11111111111111111"],
+        "securityGroups": ["sg-00000000000000000"]
+      },
+      "protocol": "HTTP",
+      "authorizerType": "AWS_IAM",
+      "instrumentation": {
+        "enableOtel": false
+      }
+    }
+  ],
+  "memories": [
+    {
+      "name": "PurchaseBehaviorSimulatorMemory",
+      "eventExpiryDuration": 30,
+      "strategies": [
+        {
+          "type": "SEMANTIC",
+          "namespaces": ["/users/{actorId}/observed-transitions"]
+        },
+        {
+          "type": "SUMMARIZATION",
+          "namespaces": ["/summaries/{actorId}/{sessionId}"]
+        },
+        {
+          "type": "USER_PREFERENCE",
+          "namespaces": ["/users/{actorId}/preferences"]
+        },
+        {
+          "type": "EPISODIC",
+          "namespaces": ["/episodes/{actorId}/{sessionId}"],
+          "reflectionNamespaces": ["/episodes/{actorId}"]
+        }
+      ]
+    }
+  ],
+  "credentials": [],
+  "evaluators": [
+    {
+      "name": "PurchaseBehaviorRuntimeHealth",
+      "level": "SESSION",
+      "description": "Deterministic runtime health check for errors, 5xx responses, and explicit fallback spans.",
+      "config": {
+        "codeBased": {
+          "managed": {
+            "codeLocation": "evaluators/runtime-health",
+            "entrypoint": "lambda_function.handler",
+            "timeoutSeconds": 30
+          }
+        }
+      }
+    }
+  ],
+  "onlineEvalConfigs": [
+    {
+      "name": "RuntimeHealthOptional",
+      "agent": "PurchaseBehaviorSimulator",
+      "evaluators": ["PurchaseBehaviorRuntimeHealth"],
+      "samplingRate": 1,
+      "description": "Optional 1 percent continuous runtime quality evaluation.",
+      "enableOnCreate": false
+    }
+  ],
+  "agentCoreGateways": [],
+  "policyEngines": []
+}

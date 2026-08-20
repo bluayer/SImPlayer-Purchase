@@ -1,0 +1,75 @@
+{
+  "counts": {
+    "impressions": 4000,
+    "events": 4973
+  },
+  "rates": {
+    "click": 0.199,
+    "purchase": 0.04425,
+    "expected_purchase": 0.05258353,
+    "high_affinity_purchase": 0.075,
+    "low_affinity_purchase": 0.025
+  },
+  "oracle_metrics": {
+    "brier": 0.03847171,
+    "log_loss": 0.14583591
+  },
+  "splits": {
+    "train": 2799,
+    "validation": 623,
+    "test": 578
+  },
+  "state_coverage": {
+    "currency_balance": 1.0,
+    "progression_need": 1.0,
+    "recent_failure_intensity": 1.0,
+    "inventory_overlap": 1.0,
+    "event_urgency": 1.0,
+    "purchase_cooldown": 1.0,
+    "current_goals": 1.0,
+    "owned_item_ids": 1.0
+  },
+  "state_unique_values": {
+    "currency_balance": 3443,
+    "progression_need": 3864,
+    "recent_failure_intensity": 3834,
+    "inventory_overlap": 4,
+    "event_urgency": 1661,
+    "purchase_cooldown": 3851,
+    "current_goals": 47,
+    "owned_item_ids": 78
+  },
+  "counterfactual_pass_rates": {
+    "currency_balance": 1.0,
+    "price": 1.0,
+    "progression_need": 1.0,
+    "event_urgency": 1.0,
+    "purchase_cooldown": 1.0,
+    "ownership": 1.0
+  },
+  "quality_gates": {
+    "non_degenerate_purchase_rate": true,
+    "affinity_direction": true,
+    "all_temporal_splits_present": true,
+    "complete_game_state": true,
+    "non_degenerate_game_state": true,
+    "counterfactual_direction": true,
+    "all_passed": true
+  },
+  "phase": "labeling",
+  "labeler": "stateful-independent-oracle-labeler-v2",
+  "generation_session_id": "assumptions-generation-20260820",
+  "labeling_session_id": "assumptions-labeling-20260820",
+  "labeling_config": {
+    "seed": 20260821
+  },
+  "source_manifest_sha256": "91a3c5e2550ad35b18a37f0c88d9d1963fa5e698e29d2915631703b0ccfb0cfb",
+  "files": {
+    "users.jsonl": "d0cdc514513053d52e2941432b9e41eb3180b0b87fd00926f5914df9ee594cf2",
+    "items.jsonl": "be9e999eb64ac8911ce33bcfc3e184a032539171bb10baec20102f2d6987b033",
+    "impressions.jsonl": "30d6717b0aeb5bb998d1b7afb0288ce44cab6288ce79529bb273bec9b3f611c3",
+    "events.jsonl": "add375d893525e7b40f23e814d7bd610c2195630ba7a52db43b882c54f80c07d",
+    "neptune/nodes.csv": "fd1df19a736617872b3805365c9872399e76a4ef46fda64eec9f002e5ae47f0c",
+    "neptune/edges.csv": "af6ed103c7993925b8478753049d352d10df5260f5add8dad714260cc5f23612"
+  }
+}

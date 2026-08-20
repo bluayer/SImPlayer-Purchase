@@ -1,0 +1,64 @@
+{
+  "graph_id": "game_store_purchase",
+  "version": "1",
+  "default_initial_state": "ITEM_EXPOSURE",
+  "surface_initial_states": {
+    "checkout": "ITEM_DETAIL"
+  },
+  "state_output_fields": {
+    "ITEM_EXPOSURE": "exposure",
+    "ITEM_DETAIL": "detail"
+  },
+  "terminal_outcomes": {
+    "PURCHASED": "purchase",
+    "EXITED": "exit"
+  },
+  "ineligible_policy": {
+    "ITEM_EXPOSURE": {
+      "SKIP": 0.98,
+      "EXIT": 0.02
+    },
+    "ITEM_DETAIL": {
+      "BACK": 0.98,
+      "EXIT": 0.02
+    }
+  },
+  "max_depth": 2,
+  "transitions": [
+    {
+      "state": "ITEM_EXPOSURE",
+      "action": "CLICK",
+      "next_state": "ITEM_DETAIL"
+    },
+    {
+      "state": "ITEM_EXPOSURE",
+      "action": "SKIP",
+      "next_state": "EXITED"
+    },
+    {
+      "state": "ITEM_EXPOSURE",
+      "action": "EXIT",
+      "next_state": "EXITED"
+    },
+    {
+      "state": "ITEM_EXPOSURE",
+      "action": "PURCHASE_NOW",
+      "next_state": "PURCHASED"
+    },
+    {
+      "state": "ITEM_DETAIL",
+      "action": "PURCHASE",
+      "next_state": "PURCHASED"
+    },
+    {
+      "state": "ITEM_DETAIL",
+      "action": "BACK",
+      "next_state": "EXITED"
+    },
+    {
+      "state": "ITEM_DETAIL",
+      "action": "EXIT",
+      "next_state": "EXITED"
+    }
+  ]
+}

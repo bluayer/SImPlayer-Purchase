@@ -1,0 +1,73 @@
+{
+  "dataset_name": "external-game-store-demo",
+  "input_mode": "event_rows",
+  "synthetic": true,
+  "files": {
+    "users": "users.csv",
+    "items": "items.csv",
+    "interactions": "events.csv"
+  },
+  "formats": {
+    "users": "csv",
+    "items": "csv",
+    "interactions": "csv"
+  },
+  "columns": {
+    "users": {
+      "user_id": "player_key",
+      "persona_summary": "persona",
+      "budget_reference": "budget"
+    },
+    "items": {
+      "item_id": "sku",
+      "product_type": "product_type",
+      "categories": "category_list",
+      "price": "price",
+      "discount_rate": "discount",
+      "components": "components",
+      "attributes": {
+        "character": "character",
+        "event_id": "event_code"
+      }
+    },
+    "interactions": {
+      "impression_id": "exposure_key",
+      "event_id": "event_key",
+      "user_id": "player_key",
+      "item_id": "sku",
+      "timestamp": "occurred_at",
+      "session_id": "session_key",
+      "surface": "page",
+      "action": "event_name",
+      "session_fatigue": "fatigue",
+      "context_features": {
+        "progression_need": "progression"
+      },
+      "game_state": {
+        "currency_balance": "balance",
+        "progression_need": "progression",
+        "recent_failure_intensity": "failure",
+        "inventory_overlap": "overlap",
+        "event_urgency": "urgency",
+        "purchase_cooldown": "cooldown",
+        "current_goals": "goals",
+        "owned_item_ids": "owned"
+      }
+    }
+  },
+  "action_map": {
+    "VIEW": "IMPRESSION",
+    "OPEN_DETAIL": "CLICK",
+    "BUY": "PURCHASE",
+    "LEAVE_DETAIL": "BACK",
+    "LEAVE_STORE": "EXIT"
+  },
+  "options": {
+    "categories_separator": "|",
+    "require_impressions": true
+  },
+  "defaults": {
+    "surface": "store_home",
+    "session_fatigue": 0.0
+  }
+}

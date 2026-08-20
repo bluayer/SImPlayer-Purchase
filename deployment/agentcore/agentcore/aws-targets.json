@@ -1,0 +1,8 @@
+[
+  {
+    "name": "default",
+    "description": "Configured locally by scripts/deploy_agentcore.py",
+    "account": "000000000000",
+    "region": "us-east-1"
+  }
+]

@@ -1,0 +1,36 @@
+{
+  "request_id": "new-category-item-001",
+  "user": {
+    "user_id": "user-42",
+    "persona_summary": "성장 효율을 중시하지만 고가 일회성 상품에는 신중함",
+    "price_sensitivity": 0.8,
+    "category_preferences": {
+      "upgrade": 0.9
+    }
+  },
+  "target_product": {
+    "product_id": "new-progression-pass",
+    "product_type": "item",
+    "categories": [
+      "upgrade"
+    ],
+    "price": 19900,
+    "discount_rate": 0.0,
+    "attributes": {
+      "character": "mage",
+      "event_id": "summer-2026",
+      "repeat_purchase_type": "one_time"
+    }
+  },
+  "product_scenario": {
+    "add_categories": [
+      "progression_pass"
+    ]
+  },
+  "exposure_scenario": {
+    "surface": "store_home",
+    "session_fatigue": 0.2,
+    "budget_reference": 30000,
+    "timestamp": "2026-08-19T10:00:00+09:00"
+  }
+}
