@@ -1,43 +1,104 @@
 {
   "evaluation_date": "2026-08-21",
-  "dataset": "assumption-based-state-rich-synthetic",
+  "dataset": "assumption-based-state-rich-long-path-synthetic",
+  "suite": "natural_frequency",
+  "action_graph": {
+    "graph_id": "game_store_purchase",
+    "version": "3",
+    "max_depth": 10
+  },
   "model_id": "openai.gpt-5.6-sol",
   "cases": 200,
   "synthetic_users": 20,
-  "generated_observed_purchases": 10,
-  "generated_observed_purchase_rate": 0.05,
+  "generated_observed_purchases": 11,
+  "generated_observed_purchase_rate": 0.055,
   "execution": {
     "successful_cases": 200,
     "failed_cases": 0,
     "fallbacks": 0,
     "schema_success_rate": 1.0,
-    "mean_latency_seconds": 29.3199,
-    "p95_latency_seconds": 49.9578
+    "mean_latency_seconds": 34.591,
+    "p95_latency_seconds": 58.1061
+  },
+  "history": {
+    "request_interactions_optional": true,
+    "recent_transition_limit": 16,
+    "cases_with_recent_prior_purchase": 77,
+    "long_term_sources": ["Amazon Bedrock AgentCore Memory", "Amazon Neptune"]
+  },
+  "observed_paths": {
+    "unique_path_count": 15,
+    "mean_length": 1.675,
+    "max_length": 7,
+    "length_at_least_4_count": 18
   },
   "primary_observed_expected_gaps": {
     "scalar_purchase": {
-      "observed_count": 10,
-      "expected_count": 15.079277,
-      "count_gap": 5.079277,
-      "observed_rate": 0.05,
-      "expected_rate": 0.07539638,
-      "rate_gap_percentage_points": 2.539638
+      "observed_count": 11,
+      "expected_count": 11.11664,
+      "count_gap": 0.11664
     },
     "trajectory_purchase": {
-      "observed_count": 10,
-      "expected_count": 11.80274682,
-      "count_gap": 1.80274682,
-      "observed_rate": 0.05,
-      "expected_rate": 0.05901373,
-      "rate_gap_percentage_points": 0.901373
+      "observed_count": 11,
+      "expected_count": 11.96607894,
+      "count_gap": 0.96607894
     },
-    "exposure_click": {
-      "observed_count": 30,
-      "expected_count": 40.50275736,
-      "count_gap": 10.50275736,
-      "observed_rate": 0.16129032,
-      "expected_rate": 0.21775676,
-      "rate_gap_percentage_points": 5.646644
+    "path_length": {
+      "observed_mean": 1.675,
+      "expected_mean": 1.70054625,
+      "mean_gap": 0.02554625
     }
+  },
+  "user_action_count_gaps": {
+    "ITEM_EXPOSURE": {
+      "CLICK": {
+        "observed_count": 30,
+        "expected_count": 37.28087939,
+        "count_gap": 7.28087939
+      },
+      "SKIP": {
+        "observed_count": 102,
+        "expected_count": 119.93098625,
+        "count_gap": 17.93098625
+      },
+      "EXIT": {
+        "observed_count": 87,
+        "expected_count": 67.27920688,
+        "count_gap": -19.72079312
+      },
+      "PURCHASE_NOW": {
+        "observed_count": 2,
+        "expected_count": 7.76228797,
+        "count_gap": 5.76228797
+      }
+    },
+    "ITEM_DETAIL": {
+      "START_PURCHASE": {
+        "observed_count": 22,
+        "expected_count": 17.58493307,
+        "count_gap": -4.41506693
+      },
+      "BACK": {
+        "observed_count": 39,
+        "expected_count": 50.49915373,
+        "count_gap": 11.49915373
+      }
+    },
+    "PURCHASE_CONFIRMATION": {
+      "CONFIRM_PURCHASE": {
+        "observed_count": 20,
+        "expected_count": 13.13556447,
+        "count_gap": -6.86443553
+      },
+      "CANCEL": {
+        "observed_count": 12,
+        "expected_count": 12.5806537,
+        "count_gap": 0.5806537
+      }
+    }
+  },
+  "environment_events": {
+    "frequency_metrics_are_primary": false,
+    "coverage_protocol": "artifacts/dataset/path-coverage-protocol"
   }
 }

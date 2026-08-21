@@ -11,6 +11,10 @@ from typing import Any, Mapping
 class StoreState(str, Enum):
     ITEM_EXPOSURE = "ITEM_EXPOSURE"
     ITEM_DETAIL = "ITEM_DETAIL"
+    PURCHASE_CONFIRMATION = "PURCHASE_CONFIRMATION"
+    PAYMENT_PROCESSING = "PAYMENT_PROCESSING"
+    CURRENCY_SHORTFALL = "CURRENCY_SHORTFALL"
+    CURRENCY_TOP_UP = "CURRENCY_TOP_UP"
     PURCHASED = "PURCHASED"
     EXITED = "EXITED"
 
@@ -20,8 +24,17 @@ class UserAction(str, Enum):
     SKIP = "SKIP"
     EXIT = "EXIT"
     PURCHASE_NOW = "PURCHASE_NOW"
-    PURCHASE = "PURCHASE"
+    START_PURCHASE = "START_PURCHASE"
     BACK = "BACK"
+    CONFIRM_PURCHASE = "CONFIRM_PURCHASE"
+    CANCEL = "CANCEL"
+    PAYMENT_SUCCESS = "PAYMENT_SUCCESS"
+    INSUFFICIENT_CURRENCY = "INSUFFICIENT_CURRENCY"
+    PAYMENT_FAILED = "PAYMENT_FAILED"
+    OPEN_TOP_UP = "OPEN_TOP_UP"
+    BACK_TO_ITEM = "BACK_TO_ITEM"
+    TOP_UP_SUCCESS = "TOP_UP_SUCCESS"
+    CANCEL_TOP_UP = "CANCEL_TOP_UP"
 
 
 def _value(value: str | Enum) -> str:
@@ -65,6 +78,7 @@ class ActionTransition:
     state: str
     action: str
     next_state: str
+    kind: str = "user_action"
     timing: TransitionTiming = field(default_factory=TransitionTiming)
 
     @classmethod
@@ -73,6 +87,7 @@ class ActionTransition:
             state=str(payload["state"]),
             action=str(payload["action"]),
             next_state=str(payload["next_state"]),
+            kind=str(payload.get("kind", "user_action")),
             timing=TransitionTiming.from_dict(payload.get("timing")),
         )
 
@@ -81,6 +96,7 @@ class ActionTransition:
             "state": self.state,
             "action": self.action,
             "next_state": self.next_state,
+            "kind": self.kind,
             "timing": self.timing.to_dict(),
         }
 
@@ -99,6 +115,10 @@ class ActionGraph:
     ineligible_policy: Mapping[str, Mapping[str, float]] = field(
         default_factory=dict
     )
+    base_distributions: Mapping[str, Mapping[str, float]] = field(
+        default_factory=dict
+    )
+    base_distribution_weight: float = 0.0
     max_depth: int = 4
 
     def __post_init__(self) -> None:
@@ -111,6 +131,11 @@ class ActionGraph:
         keys: set[tuple[str, str]] = set()
         known_states = {self.default_initial_state, *self.terminal_outcomes}
         for transition in self.transitions:
+            if transition.kind not in {"user_action", "environment_event"}:
+                raise ValueError(
+                    "action graph transition kind must be user_action or "
+                    f"environment_event: {transition.state}/{transition.action}"
+                )
             key = (transition.state, transition.action)
             if key in keys:
                 raise ValueError(
@@ -131,6 +156,21 @@ class ActionGraph:
             if invalid:
                 raise ValueError(
                     f"ineligible policy for {state!r} has invalid actions: {sorted(invalid)}"
+                )
+        if not 0.0 <= self.base_distribution_weight <= 1.0:
+            raise ValueError(
+                "action graph base_distribution_weight must be between zero and one"
+            )
+        for state, distribution in self.base_distributions.items():
+            invalid = set(distribution).difference(self.valid_actions(state))
+            if invalid:
+                raise ValueError(
+                    f"base distribution for {state!r} has invalid actions: "
+                    f"{sorted(invalid)}"
+                )
+            if sum(max(0.0, float(value)) for value in distribution.values()) <= 0.0:
+                raise ValueError(
+                    f"base distribution for {state!r} must have positive mass"
                 )
 
     @classmethod
@@ -168,6 +208,18 @@ class ActionGraph:
                     "ineligible_policy", {}
                 ).items()
             },
+            base_distributions={
+                str(state): {
+                    str(action): float(probability)
+                    for action, probability in distribution.items()
+                }
+                for state, distribution in payload.get(
+                    "base_distributions", {}
+                ).items()
+            },
+            base_distribution_weight=float(
+                payload.get("base_distribution_weight", 0.0)
+            ),
             max_depth=int(payload.get("max_depth", 4)),
         )
 
@@ -182,6 +234,11 @@ class ActionGraph:
                 state: dict(distribution)
                 for state, distribution in self.ineligible_policy.items()
             },
+            "base_distributions": {
+                state: dict(distribution)
+                for state, distribution in self.base_distributions.items()
+            },
+            "base_distribution_weight": self.base_distribution_weight,
             "terminal_outcomes": dict(self.terminal_outcomes),
             "max_depth": self.max_depth,
             "transitions": [transition.to_dict() for transition in self.transitions],
@@ -271,15 +328,26 @@ class ActionGraph:
             }
         return distributions
 
+    def base_action_distributions(self) -> dict[str, dict[str, float]]:
+        """Return configured UX priors, using uniform values when unspecified."""
+        return normalize_action_distributions(
+            self.base_distributions,
+            graph=self,
+        )
+
 
 DEFAULT_ACTION_GRAPH = ActionGraph(
     graph_id="game_store_purchase",
-    version="1",
+    version="3",
     default_initial_state=StoreState.ITEM_EXPOSURE.value,
     surface_initial_states={"checkout": StoreState.ITEM_DETAIL.value},
     state_output_fields={
         StoreState.ITEM_EXPOSURE.value: "exposure",
         StoreState.ITEM_DETAIL.value: "detail",
+        StoreState.PURCHASE_CONFIRMATION.value: "purchase_confirmation",
+        StoreState.PAYMENT_PROCESSING.value: "payment_processing",
+        StoreState.CURRENCY_SHORTFALL.value: "currency_shortfall",
+        StoreState.CURRENCY_TOP_UP.value: "currency_top_up",
     },
     ineligible_policy={
         StoreState.ITEM_EXPOSURE.value: {
@@ -287,23 +355,126 @@ DEFAULT_ACTION_GRAPH = ActionGraph(
             UserAction.EXIT.value: 0.02,
         },
         StoreState.ITEM_DETAIL.value: {
-            UserAction.BACK.value: 0.98,
-            UserAction.EXIT.value: 0.02,
+            UserAction.BACK.value: 1.0,
+        },
+        StoreState.PURCHASE_CONFIRMATION.value: {
+            UserAction.CANCEL.value: 1.0,
+        },
+        StoreState.PAYMENT_PROCESSING.value: {
+            UserAction.PAYMENT_FAILED.value: 1.0,
+        },
+        StoreState.CURRENCY_SHORTFALL.value: {
+            UserAction.BACK_TO_ITEM.value: 0.8,
+            UserAction.EXIT.value: 0.2,
+        },
+        StoreState.CURRENCY_TOP_UP.value: {
+            UserAction.CANCEL_TOP_UP.value: 0.8,
+            UserAction.EXIT.value: 0.2,
         },
     },
+    base_distributions={
+        StoreState.ITEM_EXPOSURE.value: {
+            UserAction.CLICK.value: 0.1461,
+            UserAction.SKIP.value: 0.4689,
+            UserAction.EXIT.value: 0.3832,
+            UserAction.PURCHASE_NOW.value: 0.0018,
+        },
+        StoreState.ITEM_DETAIL.value: {
+            UserAction.START_PURCHASE.value: 0.3902,
+            UserAction.BACK.value: 0.6098,
+        },
+        StoreState.PURCHASE_CONFIRMATION.value: {
+            UserAction.CONFIRM_PURCHASE.value: 0.5053,
+            UserAction.CANCEL.value: 0.4947,
+        },
+        StoreState.PAYMENT_PROCESSING.value: {
+            UserAction.PAYMENT_SUCCESS.value: 0.95,
+            UserAction.INSUFFICIENT_CURRENCY.value: 0.04,
+            UserAction.PAYMENT_FAILED.value: 0.01,
+        },
+        StoreState.CURRENCY_SHORTFALL.value: {
+            UserAction.OPEN_TOP_UP.value: 0.3333,
+            UserAction.BACK_TO_ITEM.value: 0.4889,
+            UserAction.EXIT.value: 0.1778,
+        },
+        StoreState.CURRENCY_TOP_UP.value: {
+            UserAction.TOP_UP_SUCCESS.value: 0.65,
+            UserAction.CANCEL_TOP_UP.value: 0.30,
+            UserAction.EXIT.value: 0.05,
+        },
+    },
+    base_distribution_weight=0.25,
     terminal_outcomes={
         StoreState.PURCHASED.value: "purchase",
         StoreState.EXITED.value: "exit",
     },
-    max_depth=2,
+    max_depth=10,
     transitions=(
         ActionTransition("ITEM_EXPOSURE", "CLICK", "ITEM_DETAIL"),
         ActionTransition("ITEM_EXPOSURE", "SKIP", "EXITED"),
         ActionTransition("ITEM_EXPOSURE", "EXIT", "EXITED"),
-        ActionTransition("ITEM_EXPOSURE", "PURCHASE_NOW", "PURCHASED"),
-        ActionTransition("ITEM_DETAIL", "PURCHASE", "PURCHASED"),
-        ActionTransition("ITEM_DETAIL", "BACK", "EXITED"),
-        ActionTransition("ITEM_DETAIL", "EXIT", "EXITED"),
+        ActionTransition(
+            "ITEM_EXPOSURE",
+            "PURCHASE_NOW",
+            "PURCHASE_CONFIRMATION",
+        ),
+        ActionTransition(
+            "ITEM_DETAIL",
+            "START_PURCHASE",
+            "PURCHASE_CONFIRMATION",
+        ),
+        ActionTransition("ITEM_DETAIL", "BACK", "ITEM_EXPOSURE"),
+        ActionTransition(
+            "PURCHASE_CONFIRMATION",
+            "CONFIRM_PURCHASE",
+            "PAYMENT_PROCESSING",
+        ),
+        ActionTransition(
+            "PURCHASE_CONFIRMATION",
+            "CANCEL",
+            "ITEM_DETAIL",
+        ),
+        ActionTransition(
+            "PAYMENT_PROCESSING",
+            "PAYMENT_SUCCESS",
+            "PURCHASED",
+            kind="environment_event",
+        ),
+        ActionTransition(
+            "PAYMENT_PROCESSING",
+            "INSUFFICIENT_CURRENCY",
+            "CURRENCY_SHORTFALL",
+            kind="environment_event",
+        ),
+        ActionTransition(
+            "PAYMENT_PROCESSING",
+            "PAYMENT_FAILED",
+            "PURCHASE_CONFIRMATION",
+            kind="environment_event",
+        ),
+        ActionTransition(
+            "CURRENCY_SHORTFALL",
+            "OPEN_TOP_UP",
+            "CURRENCY_TOP_UP",
+        ),
+        ActionTransition(
+            "CURRENCY_SHORTFALL",
+            "BACK_TO_ITEM",
+            "ITEM_DETAIL",
+        ),
+        ActionTransition("CURRENCY_SHORTFALL", "EXIT", "EXITED"),
+        ActionTransition(
+            "CURRENCY_TOP_UP",
+            "TOP_UP_SUCCESS",
+            "PURCHASE_CONFIRMATION",
+            kind="environment_event",
+        ),
+        ActionTransition(
+            "CURRENCY_TOP_UP",
+            "CANCEL_TOP_UP",
+            "CURRENCY_SHORTFALL",
+        ),
+        ActionTransition("CURRENCY_TOP_UP", "EXIT", "EXITED"),
     ),
 )
 
@@ -313,7 +484,14 @@ VALID_ACTIONS: Mapping[StoreState, tuple[UserAction, ...]] = {
         UserAction(action)
         for action in DEFAULT_ACTION_GRAPH.valid_actions(state)
     )
-    for state in (StoreState.ITEM_EXPOSURE, StoreState.ITEM_DETAIL)
+    for state in (
+        StoreState.ITEM_EXPOSURE,
+        StoreState.ITEM_DETAIL,
+        StoreState.PURCHASE_CONFIRMATION,
+        StoreState.PAYMENT_PROCESSING,
+        StoreState.CURRENCY_SHORTFALL,
+        StoreState.CURRENCY_TOP_UP,
+    )
 }
 
 

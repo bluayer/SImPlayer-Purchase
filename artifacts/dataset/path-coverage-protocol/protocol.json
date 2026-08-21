@@ -1,19 +1,28 @@
 {
-  "run_id": "adapter-long-path-v2-labeled-20260824-e62bb2760872",
+  "run_id": "adapter-long-path-v2-labeled-20260824-e62bb2760872-coverage-100",
   "users": 20,
   "history_fraction": 0.5,
   "history_transition_limit": 16,
-  "candidate_cases": 500,
+  "candidate_cases": 100,
   "ratio_specs": {
-    "1:1": [10, 10],
-    "1:3": [5, 15],
-    "1:9": [2, 18]
+    "1:1": [
+      10,
+      10
+    ],
+    "1:3": [
+      5,
+      15
+    ],
+    "1:9": [
+      2,
+      18
+    ]
   },
   "natural_metrics": {
     "protocol": {
       "adapter_schema": "simuser.canonical-dataset.v2",
       "dataset_name": "long-path-v2-labeled",
-      "sampling": "uniform-within-user temporal holdout",
+      "sampling": "rare-path diagnostic coverage",
       "history_unit": "observed_transitions",
       "history_transition_limit": 16,
       "cases_per_user": 25,
@@ -72,7 +81,27 @@
             "owned_item_ids": 149
           }
         }
-      }
+      },
+      "frequency_metrics_valid": false,
+      "source_run_id": "adapter-long-path-v2-labeled-20260824-e62bb2760872",
+      "selected_cases": 100,
+      "covered_actions": [
+        "BACK",
+        "BACK_TO_ITEM",
+        "CANCEL",
+        "CANCEL_TOP_UP",
+        "CLICK",
+        "CONFIRM_PURCHASE",
+        "EXIT",
+        "INSUFFICIENT_CURRENCY",
+        "OPEN_TOP_UP",
+        "PAYMENT_FAILED",
+        "PAYMENT_SUCCESS",
+        "PURCHASE_NOW",
+        "SKIP",
+        "START_PURCHASE"
+      ],
+      "covered_path_count": 18
     }
   }
 }

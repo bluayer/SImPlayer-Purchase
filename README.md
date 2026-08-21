@@ -15,19 +15,19 @@ SimPlayer Purchase는 상품을 선택하거나 정렬하는 recommender가 아�
 
 ## 현재 구현 상태
 
-| 항목                             |                      결과 |
-| -------------------------------- | ------------------------: |
-| State-rich synthetic impressions |                     4,000 |
-| GameState coverage               |             8개 필드 100% |
-| State-rich 평가 protocol         |                     500건 |
-| 현재 model-backed 평가 범위      |                     200건 |
-| Model-backed 평가                |  200/200 성공, fallback 0 |
-| 생성된 구매 행동                 |             10/200, 5.00% |
-| Scalar 기대 구매량               |  생성된 행동 대비 +5.08건 |
-| Trajectory 기대 구매량           |  생성된 행동 대비 +1.80건 |
-| `CLICK` 기대 건수                | 생성된 행동 대비 +10.50건 |
+| 항목                             |                     결과 |
+| -------------------------------- | -----------------------: |
+| State-rich synthetic impressions |                    4,000 |
+| GameState coverage               |            8개 필드 100% |
+| State-rich long-path protocol    |                    500건 |
+| 현재 model-backed 평가 범위      |                    200건 |
+| Model-backed 평가                | 200/200 성공, fallback 0 |
+| 생성된 구매 행동                 |              2/50, 4.00% |
+| Scalar 기대 구매량               | 생성된 행동 대비 +0.82건 |
+| Trajectory 기대 구매량           | 생성된 행동 대비 +1.06건 |
+| 관측 / 기대 경로 길이 평균       |              1.76 / 1.75 |
 
-현재 코드는 선호와 구매 실행을 분리하는 decision process를 포함한다. 명시적인 생성 가정, 동적 inventory/balance/cooldown과 state-rich protocol은 [Synthetic 데이터 문서](docs/synthetic-data.md)에 설명한다. 현재 200건 결과와 지표 해석은 [평가 문서](docs/evaluation.md)를 따른다.
+현재 코드는 선호와 구매 실행을 분리하는 decision process를 포함한다. 명시적인 생성 가정, 동적 inventory/balance/cooldown, 긴 관측 경로와 최근 16개 transition history는 [Synthetic 데이터 문서](docs/synthetic-data.md)에 설명한다. 현재 graph v3 200건 결과와 지표 해석은 [평가 문서](docs/evaluation.md)를 따른다.
 
 ## 기술 스택
 
@@ -51,7 +51,7 @@ persona + 과거 행동 + 현재 게임 상태 + 상품
   -> BUY_NOW / EXPLORE / DEFER / REJECT 의도 비교
   -> 기존 action schema로 commitment 반영
   -> 가격 상승, 필요 해소, 긴급성 제거, 보유 상태 counterfactual 검사
-  -> CLICK / SKIP / EXIT / PURCHASE_NOW / PURCHASE / BACK 분포
+  -> 노출 / 상세 / 구매 확인 / 결제 / 잔액 부족 / 충전 상태별 행동분포
 ```
 
 `DEFER`는 사용자 의도를 설명하기 위한 내부 상태이며 공개 action에는 추가되지 않는다. 노출 화면에서는 주로 `SKIP`, 상세 화면에서는 `BACK`으로 표현된다. Memory는 유사한 구매 사례만 찾지 않고 구매하지 않은 사례도 함께 제공한다.
@@ -71,6 +71,10 @@ persona + 과거 행동 + 현재 게임 상태 + 상품
       "SKIP": 0.57,
       "EXIT": 0.06,
       "PURCHASE_NOW": 0.06
+    },
+    "PURCHASE_CONFIRMATION": {
+      "CONFIRM_PURCHASE": 0.42,
+      "CANCEL": 0.58
     }
   },
   "likely_trajectories": [
@@ -83,7 +87,7 @@ persona + 과거 행동 + 현재 게임 상태 + 상품
     }
   ],
   "action_graph_id": "game_store_purchase",
-  "action_graph_version": "1"
+  "action_graph_version": "3"
 }
 ```
 
@@ -113,7 +117,7 @@ docs/                             아키텍처, 평가, 데이터, 배포 문서
 deployment/agentcore/             AgentCore Runtime, Memory, evaluator
 deployment/neptune/               Neptune 배포 템플릿
 artifacts/dataset/                state-rich 500건 protocol과 데이터 생성 명세
-artifacts/evaluation/current/     현재 200건 평가 결과
+artifacts/evaluation/current/     현재 graph v3 200건 평가 결과
 ```
 
 개발 실험은 `internal/`에 격리하며 Git 저장소에는 포함하지 않는다.
@@ -123,7 +127,7 @@ artifacts/evaluation/current/     현재 200건 평가 결과
 | 사용 범위 | 필요한 준비 |
 | --- | --- |
 | 로컬 demo | Python 3.14 |
-| 200건 model 평가 | AWS credential과 대상 region의 model access |
+| Model-backed 평가 | AWS credential과 대상 region의 model access |
 | AgentCore 배포 | AWS CLI v2, Node.js 20+, AgentCore CLI 0.27.0, uv, private VPC, Neptune |
 | 실제 데이터 연결 | schema mapping, 가명화 salt, 필드 allow-list와 보존 정책 |
 
@@ -176,18 +180,22 @@ purchase-behavior-simulator generate-synthetic \
   --items 60 \
   --impressions 4000 \
   --days 90 \
-  --seed 20260820
+  --seed 20260822
 
 purchase-behavior-simulator label-synthetic \
   --input generated/scenarios-current \
   --output generated/labeled-current \
-  --seed 20260821
+  --seed 20260823
 
 PYTHONPATH=src python scripts/prepare_dataset_eval.py \
   --canonical-dir generated/labeled-current \
   --output-dir generated/state-rich-protocol \
+  --coverage-output-dir generated/path-coverage-protocol \
+  --coverage-cases 100 \
   --users 20 \
   --cases-per-user 25 \
+  --history-limit 16 \
+  --seed 20260824 \
   --require-game-state
 ```
 
@@ -195,7 +203,7 @@ PYTHONPATH=src python scripts/prepare_dataset_eval.py \
 
 ## Full Suite
 
-Git에는 state-rich 500건 synthetic protocol과 데이터 품질 report를 포함한다. Answer key는 추론 입력에서 분리하며, 현재 공식 model-backed 평가는 protocol의 200건 prefix를 사용한다.
+Git에는 state-rich long-path 500건 natural protocol, 별도 path-coverage protocol과 데이터 품질 report를 포함한다. Answer key는 추론 입력에서 분리하며, 현재 공식 model-backed 평가는 natural protocol의 200건 prefix를 사용한다.
 
 먼저 사용할 AWS profile/region과 model ID를 확인하고 1건 smoke를 실행한다. 공개 compact report는 `us-east-1`의 `openai.gpt-5.6-sol`로 생성했지만, 해당 model이 대상 계정에서 활성화돼 있어야 한다.
 
@@ -207,27 +215,27 @@ aws sts get-caller-identity
 
 PYTHONPATH=src python scripts/run_full_suite.py \
   --protocol-dir artifacts/dataset/protocol \
-  --output-dir artifacts/evaluation/runs/current-200 \
+  --output-dir artifacts/evaluation/runs/current \
   --model-id "$PURCHASE_BEHAVIOR_MODEL_ID" \
   --limit 1 \
   --workers 1 \
-  --fallback-retries 1
+  --fallback-retries 2
 ```
 
-Smoke가 성공하면 같은 output directory와 명령을 사용해 200건으로 확장한다. 완료한 첫 case는 checkpoint에서 재사용한다.
+Smoke가 성공하면 같은 output directory와 명령을 사용해 필요한 case 수까지 확장한다. 완료한 첫 case는 checkpoint에서 재사용한다.
 
 ```bash
 PYTHONPATH=src python scripts/run_full_suite.py \
   --protocol-dir artifacts/dataset/protocol \
-  --output-dir artifacts/evaluation/runs/current-200 \
+  --output-dir artifacts/evaluation/runs/current \
   --model-id "$PURCHASE_BEHAVIOR_MODEL_ID" \
   --limit 200 \
   --workers 1 \
   --confirm-model-cost \
-  --fallback-retries 1
+  --fallback-retries 2
 ```
 
-현재 Git에 포함된 compact report는 이 200건 실행 결과다. Simulation 단계는 `predictions.partial.jsonl`에 case별로 fsync하며 같은 명령을 다시 실행하면 완료한 case를 건너뛰고 이어서 실행한다. `--fallback-retries 1`은 실패 또는 fallback case가 있을 때만 해당 case를 한 번 더 호출하고 report를 자동 재집계한다. 다른 model이나 region을 사용하면 동일 수치를 기대할 수 없다.
+현재 Git에 포함된 compact report는 graph v3 200건 탐색 실행 결과다. Simulation 단계는 `predictions.partial.jsonl`에 case별로 fsync하며 같은 명령을 다시 실행하면 완료한 case를 건너뛰고 이어서 실행한다. `--fallback-retries 2`는 실패 또는 fallback case가 있을 때만 해당 case를 최대 두 번 더 호출하고 report를 자동 재집계한다. 다른 model이나 region을 사용하면 동일 수치를 기대할 수 없다.
 
 ## AgentCore 배포
 

@@ -41,12 +41,14 @@ Generation 단계가 만드는 상태는 label에 의존하지 않는 외생 상
 노출 직전 balance / inventory / last purchase
   -> GameStateSnapshot
   -> inference-isolated oracle probability
-  -> CLICK / PURCHASE sampling
+  -> observable action-path sampling
   -> balance 차감, inventory 추가, cooldown 시작
   -> 다음 노출
 ```
 
-따라서 구매한 비소모성 상품은 이후 `owned_item_ids`에 나타나고, 구매 직후에는 `purchase_cooldown`이 높아진다. Label과 이후 state가 서로 다른 hidden trajectory를 사용하지 않는다.
+Labeler는 `CLICK`, `START_PURCHASE`, `CONFIRM_PURCHASE`, `PAYMENT_SUCCESS`, `PAYMENT_FAILED`, `INSUFFICIENT_CURRENCY`, 충전 성공·취소와 화면 이탈처럼 telemetry에서 직접 확인 가능한 event만 생성한다. `COMPARISON`이나 `HESITATE`처럼 실제 log에서 확인할 수 없는 추론 행동은 생성하지 않는다.
+
+따라서 구매한 비소모성 상품은 이후 `owned_item_ids`에 나타나고, 구매 직후에는 `purchase_cooldown`이 높아진다. 이전 구매가 이후 노출의 최근 16개 transition에 포함될 수 있으며, balance·inventory·cooldown도 같은 시간순 경로에서 갱신된다. Label과 이후 state가 서로 다른 hidden trajectory를 사용하지 않는다.
 
 출력 `impressions.jsonl`의 `game_state`에는 다음 필드가 모두 포함된다.
 
@@ -87,12 +89,12 @@ purchase-behavior-simulator generate-synthetic \
   --items 60 \
   --impressions 4000 \
   --days 90 \
-  --seed 20260820
+  --seed 20260822
 
 purchase-behavior-simulator label-synthetic \
   --input generated/scenarios-current \
   --output generated/labeled-current \
-  --seed 20260821
+  --seed 20260823
 ```
 
 State-rich 평가 protocol은 coverage gate를 반드시 켠다.
@@ -101,9 +103,12 @@ State-rich 평가 protocol은 coverage gate를 반드시 켠다.
 PYTHONPATH=src python scripts/prepare_dataset_eval.py \
   --canonical-dir generated/labeled-current \
   --output-dir generated/state-rich-protocol \
+  --coverage-output-dir generated/path-coverage-protocol \
+  --coverage-cases 100 \
   --users 20 \
   --cases-per-user 25 \
-  --history-fraction 0.5 \
+  --history-limit 16 \
+  --seed 20260824 \
   --require-game-state
 ```
 
@@ -126,19 +131,25 @@ Model-backed 평가 전에 다음 조건을 모두 확인한다.
 4. 8개 핵심 `GameStateSnapshot` field coverage가 100%다.
 5. 수치형 state가 constant가 아니며 inventory와 goals가 실제로 변한다.
 6. 가격 상승, balance 감소, need 해소, urgency 제거, ownership 추가와 cooldown 증가는 oracle 구매확률을 높이지 않는다.
-7. 평가에 사용하는 200건 prefix가 20명을 포함하고 자연 구매율을 유지한다.
-8. Answer key는 blind request에 포함되지 않는다.
+7. Action path가 telemetry로 관측 가능한 graph transition만 사용한다.
+8. 4단계 이상 경로와 서로 다른 경로 signature가 실제로 생성된다.
+9. 최근 history는 impression 수가 아니라 최대 16개의 관측 transition으로 제한된다.
+10. Answer key는 blind request에 포함되지 않는다.
 
 현재 Git의 state-rich artifact는 4,000 impressions에서 만들었다.
 
-| 항목                                   |                    결과 |
-| -------------------------------------- | ----------------------: |
-| 관측 구매율 / expected 구매율          |         4.425% / 5.258% |
-| GameState coverage                     |      8개 필드 모두 100% |
-| Oracle counterfactual direction        |      6개 항목 모두 100% |
-| 재현용 전체 protocol                   |             500건, 20명 |
-| 현재 평가 대상                         |  200건, 20명, 구매 10건 |
-| Paired audit                           | 10 base cases, 59 pairs |
-| 데이터 준비 단계의 AWS 또는 model 호출 |                       0 |
+| 항목 | 결과 |
+| --- | --: |
+| 관측 구매율 / expected 구매율 | 6.150% / 5.091% |
+| GameState coverage | 8개 필드 모두 100% |
+| Oracle counterfactual direction | 6개 항목 모두 100% |
+| 관측 action path | 28종, 평균 1.81단계, 최대 8단계 |
+| 4단계 이상 path | 13.7% |
+| 재현용 전체 protocol | 500건, 20명 |
+| 최근 16 transition에 과거 구매가 있는 protocol case | 189/500 |
+| 현재 평가 대상 | Graph v3 200건, 20명, 구매 11건 |
+| 데이터 준비 단계의 AWS 또는 model 호출 | 0 |
 
-이 protocol의 200건 prefix를 사용한 model-backed 결과는 [평가 문서](evaluation.md)에 기록한다. 데이터 준비 단계의 품질 gate와 simulator 성능 평가는 서로 분리한다.
+Natural protocol은 사용자 action의 관측·기대 빈도를 비교한다. Path-coverage protocol은 희소 결제·잔액 부족·충전 경로가 정상 처리되는지만 검증하며 `frequency_metrics_valid=false`로 표시한다. 결제 실패 빈도는 simulator의 핵심 성능 목표로 사용하지 않는다.
+
+Natural protocol의 graph v3 200건 prefix를 사용한 model-backed 결과는 [평가 문서](evaluation.md)에 기록한다. 데이터 준비 단계의 품질 gate와 simulator 성능 평가는 서로 분리한다.

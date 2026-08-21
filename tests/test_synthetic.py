@@ -74,10 +74,16 @@ class SyntheticGeneratorTest(unittest.TestCase):
             self.assertGreater(first["rates"]["click"], 0.0)
             self.assertGreater(first["rates"]["purchase"], 0.0)
             self.assertGreater(
-                first["rates"]["high_affinity_purchase"],
-                first["rates"]["low_affinity_purchase"],
+                first["rates"]["high_affinity_expected_purchase"],
+                first["rates"]["low_affinity_expected_purchase"],
             )
             self.assertTrue(first["quality_gates"]["all_passed"])
+            self.assertGreaterEqual(first["action_paths"]["unique"], 8)
+            self.assertGreaterEqual(first["action_paths"]["max_length"], 4)
+            self.assertGreater(
+                first["action_paths"]["length_at_least_4_rate"],
+                0.0,
+            )
             self.assertEqual(
                 set(first["counterfactual_pass_rates"].values()),
                 {1.0},
@@ -137,6 +143,21 @@ class SyntheticGeneratorTest(unittest.TestCase):
                     "owned_item_ids",
                     "features",
                 },
+            )
+            observable_actions = {
+                action
+                for impression in impression_rows
+                for action in impression["observed_action_path"]
+            }
+            self.assertNotIn("COMPARISON", observable_actions)
+            self.assertNotIn("HESITATE", observable_actions)
+            self.assertNotIn("DEFER", observable_actions)
+            self.assertTrue(
+                {
+                    "START_PURCHASE",
+                    "CONFIRM_PURCHASE",
+                    "PAYMENT_SUCCESS",
+                }.issubset(observable_actions)
             )
 
             items = {

@@ -10,6 +10,7 @@ from typing import Any, Callable, Mapping, Sequence
 from .action_rollout import (
     ActionGraph,
     DEFAULT_ACTION_GRAPH,
+    blend_action_distributions,
     limit_action_distribution_revision,
     normalize_action_distributions,
     rollout_purchase_probability,
@@ -84,6 +85,16 @@ desire, feasibility, urgency, uncertainty, and hesitation. Then compare four
 latent intentions: BUY_NOW, EXPLORE, DEFER, and REJECT. DEFER is an internal
 intention, not a store action; map it to SKIP or BACK according to the current
 state. A user may strongly prefer an item while deferring the purchase.
+
+SKIP means dismissing the current offer while remaining in the store surface.
+EXIT means leaving the current store surface. Session fatigue is the strongest
+available distinction between them. If BUY_NOW remains plausible after opening
+the detail screen, carry that commitment through START_PURCHASE and
+CONFIRM_PURCHASE instead of restarting the decision at every screen.
+
+The supplied graph may contain environment_event transitions such as payment
+outcomes. Use explicit feasibility facts for those transitions, but do not let
+uncertain payment-failure frequency dominate the user-action decision.
 
 Evaluate 2-4 plausible alternatives per state. Ask only:
 - Which action is most consistent with observed past behavior and persona?
@@ -585,7 +596,18 @@ class StrandsAssessmentProvider:
                 failure="Strands performed no rollout assessment round",
             )
 
-        actor_proposed = previous["action_distributions"]
+        raw_actor_proposed = previous["action_distributions"]
+        graph_prior_weight = self.action_graph.base_distribution_weight
+        actor_proposed = blend_action_distributions(
+            raw_actor_proposed,
+            self.action_graph.base_action_distributions(),
+            {
+                state: graph_prior_weight
+                for state in self.action_graph.states
+            },
+            max_empirical_weight=graph_prior_weight,
+            graph=self.action_graph,
+        )
         empirical, empirical_strengths, transition_count = (
             empirical_transition_policy(
                 reviewed_documents,
@@ -616,6 +638,11 @@ class StrandsAssessmentProvider:
             {
                 "stage": "transition_grounding",
                 "observed_transition_count": transition_count,
+                "actor_action_distributions": raw_actor_proposed,
+                "graph_base_distributions": (
+                    self.action_graph.base_action_distributions()
+                ),
+                "graph_base_weight": graph_prior_weight,
                 "empirical_action_distributions": empirical,
                 "state_evidence_strength": empirical_strengths,
                 "action_distributions": proposed,
@@ -635,6 +662,7 @@ class StrandsAssessmentProvider:
                 grounded_distributions,
                 decision_state,
                 previous["intention_distribution"],
+                graph=self.action_graph,
             )
             if supports_default_commitment
             else SimpleNamespace(
@@ -673,6 +701,7 @@ class StrandsAssessmentProvider:
                 grounded_distributions,
                 proposed,
                 decision_state,
+                graph=self.action_graph,
             )
             if supports_default_commitment
             else SimpleNamespace(
@@ -1127,11 +1156,23 @@ class StrandsAssessmentProvider:
             state_output = getattr(
                 output,
                 self.action_graph.output_field(state),
+                None,
             )
-            distributions[state] = {
-                action: float(getattr(state_output, field_name))
-                for action, field_name in action_fields.items()
-            }
+            if state_output is None:
+                continue
+            action_values: dict[str, float] = {}
+            for action, field_name in action_fields.items():
+                value = getattr(state_output, field_name, None)
+                if (
+                    value is None
+                    and state == "ITEM_DETAIL"
+                    and action == "START_PURCHASE"
+                ):
+                    value = getattr(state_output, "purchase", None)
+                if value is not None:
+                    action_values[action] = float(value)
+            if action_values:
+                distributions[state] = action_values
         return normalize_action_distributions(
             distributions,
             graph=self.action_graph,
@@ -1163,28 +1204,13 @@ class StrandsAssessmentProvider:
     ) -> AgentAssessment:
         decision_state = build_decision_state(request)
         intentions = intentions_from_state(decision_state)
-        neutral_distributions = (
-            {
-                "ITEM_EXPOSURE": {
-                    "CLICK": 0.25,
-                    "SKIP": 0.50,
-                    "EXIT": 0.20,
-                    "PURCHASE_NOW": 0.05,
-                },
-                "ITEM_DETAIL": {
-                    "PURCHASE": 0.15,
-                    "BACK": 0.55,
-                    "EXIT": 0.30,
-                },
-            }
-            if self.action_graph.to_dict() == DEFAULT_ACTION_GRAPH.to_dict()
-            else normalize_action_distributions({}, graph=self.action_graph)
-        )
+        neutral_distributions = self.action_graph.ineligible_distributions()
         commitment = (
             apply_commitment_gate(
                 neutral_distributions,
                 decision_state,
                 intentions,
+                graph=self.action_graph,
             )
             if self.action_graph.to_dict() == DEFAULT_ACTION_GRAPH.to_dict()
             else SimpleNamespace(

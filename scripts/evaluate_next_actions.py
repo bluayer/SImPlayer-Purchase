@@ -104,6 +104,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "observed_detail_action": saved.get(
                         "observed_detail_action"
                     ),
+                    "observed_action_path": saved.get(
+                        "observed_action_path",
+                        (),
+                    ),
                     "action_distributions": action_distributions(prediction),
                     **case_slice(blind),
                 }
@@ -118,7 +122,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             args.data_dir,
             selected_users=10,
             history_fraction=0.5,
-            history_limit=50,
+            history_limit=16,
             seed=args.seed,
             excluded_user_ids=args.exclude_users,
             compute_natural_metrics=False,
@@ -148,6 +152,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "observed_initial_state": case.observed_initial_state,
                     "observed_next_action": case.observed_next_action,
                     "observed_detail_action": case.observed_detail_action,
+                    "observed_action_path": case.observed_action_path,
                     "action_distributions": action_distributions(prediction),
                     **case_slice(blind_rows[case.case_id]),
                 }

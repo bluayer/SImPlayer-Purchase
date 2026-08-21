@@ -7,7 +7,7 @@
     "days": 90,
     "latent_dimensions": 12,
     "candidate_pool_size": 48,
-    "seed": 20260820,
+    "seed": 20260822,
     "start_time": "2026-01-01T00:00:00+00:00"
   },
   "counts": {
@@ -23,20 +23,20 @@
     "current_goals": 1.0
   },
   "state_unique_values": {
-    "progression_need": 3835,
-    "recent_failure_intensity": 3734,
-    "event_urgency": 1661,
-    "current_goals": 47
+    "progression_need": 3846,
+    "recent_failure_intensity": 3741,
+    "event_urgency": 1497,
+    "current_goals": 48
   },
   "splits": {
-    "train": 2799,
-    "validation": 623,
+    "train": 2800,
+    "validation": 622,
     "test": 578
   },
   "exposure_policies": {
-    "popular": 1016,
-    "exploration": 498,
-    "personalized": 2486
+    "personalized": 2460,
+    "popular": 996,
+    "exploration": 544
   },
   "quality_gates": {
     "all_temporal_splits_present": true,
@@ -47,7 +47,7 @@
     "all_passed": true
   },
   "phase": "generation",
-  "generation_session_id": "assumptions-generation-20260820",
+  "generation_session_id": "generate-99a30f59-9964-4a99-862d-e4865fbfa584",
   "labeling_session_id": null,
   "assumptions": {
     "schema_version": "state-rich-assumptions-v1",
@@ -68,11 +68,11 @@
     "initial_owned_item_count_p90": 12.0
   },
   "files": {
-    "users.jsonl": "d0cdc514513053d52e2941432b9e41eb3180b0b87fd00926f5914df9ee594cf2",
-    "items.jsonl": "be9e999eb64ac8911ce33bcfc3e184a032539171bb10baec20102f2d6987b033",
-    "scenarios.jsonl": "cc31a4b0d6ff52730110523e41df7e1091762eda1092e6173b22bd88b607b4dd",
-    "oracle/oracle.jsonl": "4c50528ae5fb72133d0c8ec9ec8343ca37be4fd379258c01d11a017639299243",
-    "neptune/nodes.csv": "fd1df19a736617872b3805365c9872399e76a4ef46fda64eec9f002e5ae47f0c",
-    "neptune/static_edges.csv": "a7834e014198e3e04eae406e9630469c6a3a1ceb7e3eca51b5867a100ec73471"
+    "users.jsonl": "e9c82c66de84fd0d98730114e0dd08883ed1d51db1e3a315c0a4fdd6fb466166",
+    "items.jsonl": "96891802176ba323fb921c58f3263f20ce696fc69f6d7291a56b90dbd8099f89",
+    "scenarios.jsonl": "040725bf4bda50f196da03e99d4ccee3793347bcb1c8b5022dc9c6b421405eb1",
+    "oracle/oracle.jsonl": "0453bcb2fea1b88a5b26cc3b60d477318d3b1373dda218073225db9ddcb6932b",
+    "neptune/nodes.csv": "5850793ab45ed6ecbf50ba22b1273b6f1f791e23ca261cc34489fea3a73967d4",
+    "neptune/static_edges.csv": "af6d721e1978033f3e4a0b99c81ee5c44fdf58bd3166dfdaa06ad1666ed941ed"
   }
 }

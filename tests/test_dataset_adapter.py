@@ -19,6 +19,7 @@ from purchase_behavior_simulator.dataset_adapter import (
     ProductionExportBuilder,
     ProductionExportConfig,
     ProtocolBuildConfig,
+    build_path_coverage_protocol,
 )
 from purchase_behavior_simulator.evaluation import read_jsonl, save_protocol
 from purchase_behavior_simulator.models import ProductComponent
@@ -29,6 +30,38 @@ EXAMPLE = ROOT / "examples" / "dataset_adapter"
 
 
 class DatasetAdapterTest(unittest.TestCase):
+    def test_path_coverage_protocol_is_separate_from_natural_frequency(
+        self,
+    ) -> None:
+        dataset = MappedTabularDatasetAdapter(EXAMPLE / "config.json").load()
+        natural = EvaluationProtocolBuilder(
+            dataset,
+            ProtocolBuildConfig(
+                selected_users=2,
+                cases_per_user=4,
+                history_fraction=0.25,
+                history_limit=16,
+                seed=7,
+            ),
+        ).build()
+
+        coverage = build_path_coverage_protocol(natural, max_cases=4)
+
+        self.assertEqual(len(coverage.cases), 4)
+        self.assertTrue(
+            all(
+                case.ratio_membership == ("path_coverage",)
+                for case in coverage.cases
+            )
+        )
+        metadata = coverage.natural_metrics["protocol"]
+        self.assertFalse(metadata["frequency_metrics_valid"])
+        self.assertEqual(
+            metadata["source_run_id"],
+            natural.run_id,
+        )
+        self.assertGreaterEqual(metadata["covered_path_count"], 1)
+
     def test_mapped_event_rows_are_normalized(self) -> None:
         dataset = MappedTabularDatasetAdapter(EXAMPLE / "config.json").load()
 
@@ -55,7 +88,7 @@ class DatasetAdapterTest(unittest.TestCase):
         )
         self.assertEqual(purchased.game_state["owned_item_ids"], [])
 
-    def test_evaluation_protocol_uses_only_pre_cutoff_history(self) -> None:
+    def test_evaluation_protocol_keeps_bootstrap_pre_cutoff(self) -> None:
         dataset = MappedTabularDatasetAdapter(EXAMPLE / "config.json").load()
         protocol = EvaluationProtocolBuilder(
             dataset,
@@ -116,8 +149,17 @@ class DatasetAdapterTest(unittest.TestCase):
                         "SKIP",
                         "EXIT",
                         "PURCHASE_NOW",
-                        "PURCHASE",
                         "BACK",
+                        "START_PURCHASE",
+                        "CONFIRM_PURCHASE",
+                        "CANCEL",
+                        "PAYMENT_SUCCESS",
+                        "INSUFFICIENT_CURRENCY",
+                        "PAYMENT_FAILED",
+                        "OPEN_TOP_UP",
+                        "BACK_TO_ITEM",
+                        "TOP_UP_SUCCESS",
+                        "CANCEL_TOP_UP",
                     }
                 )
             )
@@ -130,6 +172,78 @@ class DatasetAdapterTest(unittest.TestCase):
             self.assertTrue(
                 all(answer["oracle_probability"] is None for answer in answers)
             )
+
+    def test_recent_history_rolls_forward_observed_holdout_transitions(
+        self,
+    ) -> None:
+        timestamps = [
+            datetime(2026, 1, day, tzinfo=timezone.utc)
+            for day in range(1, 7)
+        ]
+        rows = []
+        for index, timestamp in enumerate(timestamps):
+            purchase = index == 3
+            rows.append(
+                CanonicalImpression(
+                    impression_id=f"imp-{index}",
+                    user_id="u1",
+                    item_id="i1",
+                    timestamp=timestamp,
+                    session_id=f"s-{index}",
+                    clicked=purchase,
+                    purchased=purchase,
+                    observed_initial_state="ITEM_EXPOSURE",
+                    observed_action_path=(
+                        (
+                            "CLICK",
+                            "START_PURCHASE",
+                            "CONFIRM_PURCHASE",
+                            "PAYMENT_SUCCESS",
+                        )
+                        if purchase
+                        else ("SKIP",)
+                    ),
+                )
+            )
+        dataset = CanonicalDataset(
+            dataset_name="rolling-history",
+            users={"u1": CanonicalUser(user_id="u1")},
+            items={
+                "i1": CanonicalItem(
+                    item_id="i1",
+                    categories=("upgrade",),
+                    price=100,
+                )
+            },
+            impressions=tuple(rows),
+        )
+
+        protocol = EvaluationProtocolBuilder(
+            dataset,
+            ProtocolBuildConfig(
+                selected_users=1,
+                cases_per_user=None,
+                history_fraction=0.5,
+                history_limit=16,
+                seed=3,
+            ),
+        ).build()
+
+        final_case = next(
+            case for case in protocol.cases if case.case_id.endswith("imp-5")
+        )
+        event_types = {
+            event["event_type"]
+            for event in final_case.request["interactions"]
+        }
+        self.assertIn("purchase", event_types)
+        self.assertEqual(protocol.history_transition_limit, 16)
+        self.assertLessEqual(
+            final_case.request["context"]["features"][
+                "recent_history_transition_count"
+            ],
+            16,
+        )
 
     def test_evaluation_protocol_preserves_game_state(self) -> None:
         timestamps = [
@@ -233,9 +347,54 @@ class DatasetAdapterTest(unittest.TestCase):
                 for transition in row["observation"]["transitions"]
             }
             self.assertIn(("ITEM_EXPOSURE", "CLICK"), transition_pairs)
-            self.assertIn(("ITEM_DETAIL", "PURCHASE"), transition_pairs)
+            self.assertIn(("ITEM_DETAIL", "START_PURCHASE"), transition_pairs)
+            self.assertIn(
+                ("PURCHASE_CONFIRMATION", "CONFIRM_PURCHASE"),
+                transition_pairs,
+            )
+            self.assertIn(
+                ("PAYMENT_PROCESSING", "PAYMENT_SUCCESS"),
+                transition_pairs,
+            )
             self.assertTrue((output / "neptune" / "nodes.csv").is_file())
             self.assertTrue((output / "neptune" / "edges.csv").is_file())
+            with (output / "neptune" / "edges.csv").open(
+                encoding="utf-8",
+                newline="",
+            ) as handle:
+                action_edges = {
+                    (
+                        row[":TYPE"],
+                        row["state:String"],
+                        row["nextState:String"],
+                    )
+                    for row in csv.DictReader(handle)
+                    if row[":TYPE"] in {
+                        "START_PURCHASE",
+                        "CONFIRM_PURCHASE",
+                        "PAYMENT_SUCCESS",
+                    }
+                }
+            self.assertIn(
+                (
+                    "START_PURCHASE",
+                    "ITEM_DETAIL",
+                    "PURCHASE_CONFIRMATION",
+                ),
+                action_edges,
+            )
+            self.assertIn(
+                (
+                    "CONFIRM_PURCHASE",
+                    "PURCHASE_CONFIRMATION",
+                    "PAYMENT_PROCESSING",
+                ),
+                action_edges,
+            )
+            self.assertIn(
+                ("PAYMENT_SUCCESS", "PAYMENT_PROCESSING", "PURCHASED"),
+                action_edges,
+            )
 
     def test_production_export_rejects_synthetic_by_default(self) -> None:
         dataset = MappedTabularDatasetAdapter(EXAMPLE / "config.json").load()

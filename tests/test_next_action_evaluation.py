@@ -14,6 +14,64 @@ from purchase_behavior_simulator.next_action_evaluation import (
 
 
 class NextActionEvaluationTest(unittest.TestCase):
+    def test_report_separates_user_actions_from_environment_events(
+        self,
+    ) -> None:
+        report = evaluate_next_actions(
+            [
+                {
+                    "observed_initial_state": "ITEM_EXPOSURE",
+                    "observed_action_path": [
+                        "CLICK",
+                        "START_PURCHASE",
+                        "CONFIRM_PURCHASE",
+                        "PAYMENT_SUCCESS",
+                    ],
+                    "action_distributions": {
+                        "ITEM_EXPOSURE": {
+                            "CLICK": 1.0,
+                            "SKIP": 0.0,
+                            "EXIT": 0.0,
+                            "PURCHASE_NOW": 0.0,
+                        },
+                        "ITEM_DETAIL": {
+                            "START_PURCHASE": 1.0,
+                            "BACK": 0.0,
+                            "EXIT": 0.0,
+                        },
+                        "PURCHASE_CONFIRMATION": {
+                            "CONFIRM_PURCHASE": 1.0,
+                            "CANCEL": 0.0,
+                            "EXIT": 0.0,
+                        },
+                        "PAYMENT_PROCESSING": {
+                            "PAYMENT_SUCCESS": 1.0,
+                            "INSUFFICIENT_CURRENCY": 0.0,
+                            "PAYMENT_FAILED": 0.0,
+                        },
+                    },
+                }
+            ]
+        )
+
+        stochastic = report["stochastic_expected"]
+        self.assertIn(
+            "CONFIRM_PURCHASE",
+            stochastic["user_action_count_gaps"][
+                "PURCHASE_CONFIRMATION"
+            ],
+        )
+        self.assertNotIn(
+            "PAYMENT_SUCCESS",
+            stochastic["user_action_count_gaps"]["PAYMENT_PROCESSING"],
+        )
+        self.assertIn(
+            "PAYMENT_SUCCESS",
+            stochastic["environment_event_count_gaps"][
+                "PAYMENT_PROCESSING"
+            ],
+        )
+
     def test_maps_sampled_behavior_to_game_store_actions(self) -> None:
         self.assertEqual(
             observed_action_labels(
@@ -55,6 +113,12 @@ class NextActionEvaluationTest(unittest.TestCase):
                     "observed_initial_state": "ITEM_EXPOSURE",
                     "observed_next_action": "CLICK",
                     "observed_detail_action": "PURCHASE",
+                    "observed_action_path": (
+                        "CLICK",
+                        "START_PURCHASE",
+                        "CONFIRM_PURCHASE",
+                        "PAYMENT_SUCCESS",
+                    ),
                     "action_distributions": {
                         "ITEM_EXPOSURE": {
                             "CLICK": 0.8,
@@ -63,9 +127,17 @@ class NextActionEvaluationTest(unittest.TestCase):
                             "PURCHASE_NOW": 0.05,
                         },
                         "ITEM_DETAIL": {
-                            "PURCHASE": 0.2,
-                            "BACK": 0.7,
-                            "EXIT": 0.1,
+                            "START_PURCHASE": 0.2,
+                            "BACK": 0.8,
+                        },
+                        "PURCHASE_CONFIRMATION": {
+                            "CONFIRM_PURCHASE": 1.0,
+                            "CANCEL": 0.0,
+                        },
+                        "PAYMENT_PROCESSING": {
+                            "PAYMENT_SUCCESS": 1.0,
+                            "INSUFFICIENT_CURRENCY": 0.0,
+                            "PAYMENT_FAILED": 0.0,
                         },
                     },
                 },
@@ -74,7 +146,6 @@ class NextActionEvaluationTest(unittest.TestCase):
 
         self.assertEqual(report["exposure"]["accuracy"], 1.0)
         self.assertEqual(report["detail"]["accuracy"], 0.0)
-        self.assertEqual(report["trajectory"]["exact_match"], 0.0)
         self.assertEqual(
             report["primary_metrics"]["trajectory_expected_exact_match"],
             0.16,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from purchase_behavior_simulator.decision_process import (
@@ -30,9 +31,8 @@ ACTION_DISTRIBUTIONS = {
         "PURCHASE_NOW": 0.20,
     },
     "ITEM_DETAIL": {
-        "PURCHASE": 0.30,
-        "BACK": 0.50,
-        "EXIT": 0.20,
+        "START_PURCHASE": 0.375,
+        "BACK": 0.625,
     },
 }
 
@@ -106,6 +106,7 @@ class DecisionProcessTest(unittest.TestCase):
             hesitation=0.2,
             evidence_confidence=0.6,
             state_confidence=1.0,
+            exit_pressure=0.4,
             repeat_purchase_plausible=False,
         )
 
@@ -190,12 +191,99 @@ class DecisionProcessTest(unittest.TestCase):
         )
         self.assertNotIn("DEFER", result.distributions["ITEM_DETAIL"])
         self.assertLess(
-            result.distributions["ITEM_DETAIL"]["PURCHASE"],
-            ACTION_DISTRIBUTIONS["ITEM_DETAIL"]["PURCHASE"],
+            result.distributions["ITEM_DETAIL"]["START_PURCHASE"],
+            ACTION_DISTRIBUTIONS["ITEM_DETAIL"]["START_PURCHASE"],
         )
         self.assertGreater(
             result.distributions["ITEM_DETAIL"]["BACK"],
             ACTION_DISTRIBUTIONS["ITEM_DETAIL"]["BACK"],
+        )
+
+    def test_exit_pressure_separates_skip_from_surface_exit(self) -> None:
+        low_fatigue = build_decision_state(
+            request_with_state(
+                {
+                    "currency_balance": 80,
+                    "progression_need": 0.2,
+                    "event_urgency": 0.0,
+                }
+            )
+        )
+        request = request_with_state(
+            {
+                "currency_balance": 80,
+                "progression_need": 0.2,
+                "event_urgency": 0.0,
+            }
+        )
+        request = replace(
+            request,
+            context=replace(request.context, session_fatigue=1.0),
+        )
+        high_fatigue = build_decision_state(request)
+        intentions = {
+            "BUY_NOW": 0.05,
+            "EXPLORE": 0.10,
+            "DEFER": 0.55,
+            "REJECT": 0.30,
+        }
+
+        low = apply_commitment_gate(
+            ACTION_DISTRIBUTIONS,
+            low_fatigue,
+            intentions,
+        )
+        high = apply_commitment_gate(
+            ACTION_DISTRIBUTIONS,
+            high_fatigue,
+            intentions,
+        )
+
+        self.assertGreater(high_fatigue.exit_pressure, low_fatigue.exit_pressure)
+        self.assertGreater(
+            high.distributions["ITEM_EXPOSURE"]["EXIT"],
+            low.distributions["ITEM_EXPOSURE"]["EXIT"],
+        )
+        self.assertLess(
+            high.distributions["ITEM_EXPOSURE"]["SKIP"],
+            low.distributions["ITEM_EXPOSURE"]["SKIP"],
+        )
+
+    def test_buy_now_intention_carries_through_purchase_confirmation(self) -> None:
+        state = build_decision_state(
+            request_with_state(
+                {
+                    "currency_balance": 250,
+                    "progression_need": 0.9,
+                    "recent_failure_intensity": 0.8,
+                    "event_urgency": 0.7,
+                }
+            )
+        )
+        distributions = {
+            **ACTION_DISTRIBUTIONS,
+            "PURCHASE_CONFIRMATION": {
+                "CONFIRM_PURCHASE": 0.25,
+                "CANCEL": 0.75,
+            },
+        }
+
+        result = apply_commitment_gate(
+            distributions,
+            state,
+            {
+                "BUY_NOW": 0.75,
+                "EXPLORE": 0.10,
+                "DEFER": 0.10,
+                "REJECT": 0.05,
+            },
+        )
+
+        self.assertGreater(
+            result.distributions["PURCHASE_CONFIRMATION"][
+                "CONFIRM_PURCHASE"
+            ],
+            distributions["PURCHASE_CONFIRMATION"]["CONFIRM_PURCHASE"],
         )
 
     def test_commitment_gate_requires_current_state_evidence(self) -> None:

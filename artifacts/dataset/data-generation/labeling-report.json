@@ -1,22 +1,24 @@
 {
   "counts": {
     "impressions": 4000,
-    "events": 4973
+    "events": 11231
   },
   "rates": {
-    "click": 0.199,
-    "purchase": 0.04425,
-    "expected_purchase": 0.05258353,
-    "high_affinity_purchase": 0.075,
-    "low_affinity_purchase": 0.025
+    "click": 0.26475,
+    "purchase": 0.0615,
+    "expected_purchase": 0.05090527,
+    "high_affinity_purchase": 0.07,
+    "low_affinity_purchase": 0.0425,
+    "high_affinity_expected_purchase": 0.0795399,
+    "low_affinity_expected_purchase": 0.03012373
   },
   "oracle_metrics": {
-    "brier": 0.03847171,
-    "log_loss": 0.14583591
+    "brier": 0.05189255,
+    "log_loss": 0.18855361
   },
   "splits": {
-    "train": 2799,
-    "validation": 623,
+    "train": 2800,
+    "validation": 622,
     "test": 578
   },
   "state_coverage": {
@@ -30,14 +32,14 @@
     "owned_item_ids": 1.0
   },
   "state_unique_values": {
-    "currency_balance": 3443,
-    "progression_need": 3864,
-    "recent_failure_intensity": 3834,
+    "currency_balance": 3497,
+    "progression_need": 3868,
+    "recent_failure_intensity": 3844,
     "inventory_overlap": 4,
-    "event_urgency": 1661,
-    "purchase_cooldown": 3851,
-    "current_goals": 47,
-    "owned_item_ids": 78
+    "event_urgency": 1497,
+    "purchase_cooldown": 3923,
+    "current_goals": 48,
+    "owned_item_ids": 149
   },
   "counterfactual_pass_rates": {
     "currency_balance": 1.0,
@@ -47,6 +49,34 @@
     "purchase_cooldown": 1.0,
     "ownership": 1.0
   },
+  "action_paths": {
+    "unique": 28,
+    "mean_length": 1.80775,
+    "max_length": 8,
+    "length_at_least_4_rate": 0.137,
+    "top_signatures": {
+      "SKIP": 1593,
+      "EXIT": 1327,
+      "CLICK → BACK → SKIP": 194,
+      "CLICK → START_PURCHASE → CONFIRM_PURCHASE → PAYMENT_SUCCESS": 132,
+      "BACK → SKIP": 108,
+      "CLICK → BACK → EXIT": 106,
+      "CLICK → START_PURCHASE → CONFIRM_PURCHASE → PAYMENT_FAILED → CANCEL → BACK → EXIT": 104,
+      "CLICK → START_PURCHASE → CANCEL → BACK → SKIP": 88,
+      "CLICK → START_PURCHASE → CANCEL → BACK → EXIT": 70,
+      "START_PURCHASE → CONFIRM_PURCHASE → PAYMENT_SUCCESS": 64,
+      "START_PURCHASE → CONFIRM_PURCHASE → PAYMENT_FAILED → CANCEL → BACK → EXIT": 54,
+      "BACK → EXIT": 43,
+      "START_PURCHASE → CANCEL → BACK → SKIP": 30,
+      "START_PURCHASE → CANCEL → BACK → EXIT": 28,
+      "PURCHASE_NOW → CONFIRM_PURCHASE → PAYMENT_SUCCESS": 17,
+      "CLICK → START_PURCHASE → CANCEL → START_PURCHASE → CONFIRM_PURCHASE → PAYMENT_SUCCESS": 10,
+      "CLICK → START_PURCHASE → CONFIRM_PURCHASE → PAYMENT_FAILED → CONFIRM_PURCHASE → PAYMENT_SUCCESS": 7,
+      "CLICK → START_PURCHASE → CONFIRM_PURCHASE → INSUFFICIENT_CURRENCY → OPEN_TOP_UP → TOP_UP_SUCCESS → CONFIRM_PURCHASE → PAYMENT_SUCCESS": 6,
+      "CLICK → START_PURCHASE → CONFIRM_PURCHASE → INSUFFICIENT_CURRENCY → OPEN_TOP_UP → CANCEL_TOP_UP → EXIT": 4,
+      "START_PURCHASE → CONFIRM_PURCHASE → PAYMENT_FAILED → CONFIRM_PURCHASE → PAYMENT_SUCCESS": 3
+    }
+  },
   "quality_gates": {
     "non_degenerate_purchase_rate": true,
     "affinity_direction": true,
@@ -54,22 +84,24 @@
     "complete_game_state": true,
     "non_degenerate_game_state": true,
     "counterfactual_direction": true,
+    "long_action_paths_present": true,
+    "diverse_action_paths": true,
     "all_passed": true
   },
   "phase": "labeling",
   "labeler": "stateful-independent-oracle-labeler-v2",
-  "generation_session_id": "assumptions-generation-20260820",
-  "labeling_session_id": "assumptions-labeling-20260820",
+  "generation_session_id": "generate-99a30f59-9964-4a99-862d-e4865fbfa584",
+  "labeling_session_id": "label-3dcd594a-fc22-4b24-8e02-d1bd8299cda6",
   "labeling_config": {
-    "seed": 20260821
+    "seed": 20260823
   },
-  "source_manifest_sha256": "91a3c5e2550ad35b18a37f0c88d9d1963fa5e698e29d2915631703b0ccfb0cfb",
+  "source_manifest_sha256": "514f646a9ef0992811c6bd4b9fc84857a54a75b5d4bac2030f02bade6a371f69",
   "files": {
-    "users.jsonl": "d0cdc514513053d52e2941432b9e41eb3180b0b87fd00926f5914df9ee594cf2",
-    "items.jsonl": "be9e999eb64ac8911ce33bcfc3e184a032539171bb10baec20102f2d6987b033",
-    "impressions.jsonl": "30d6717b0aeb5bb998d1b7afb0288ce44cab6288ce79529bb273bec9b3f611c3",
-    "events.jsonl": "add375d893525e7b40f23e814d7bd610c2195630ba7a52db43b882c54f80c07d",
-    "neptune/nodes.csv": "fd1df19a736617872b3805365c9872399e76a4ef46fda64eec9f002e5ae47f0c",
-    "neptune/edges.csv": "af6ed103c7993925b8478753049d352d10df5260f5add8dad714260cc5f23612"
+    "users.jsonl": "e9c82c66de84fd0d98730114e0dd08883ed1d51db1e3a315c0a4fdd6fb466166",
+    "items.jsonl": "96891802176ba323fb921c58f3263f20ce696fc69f6d7291a56b90dbd8099f89",
+    "impressions.jsonl": "463ba212f01d32b81793c80c8c02d3ec3a0ee2eae9898963236640407b21520f",
+    "events.jsonl": "6fd886ae48bf068cdcdf6f487627a8108e46d6eca07784da31cb03024dcd6d28",
+    "neptune/nodes.csv": "5850793ab45ed6ecbf50ba22b1273b6f1f791e23ca261cc34489fea3a73967d4",
+    "neptune/edges.csv": "60129742a5ab7f612e1d4b120d783386143a3da32a1f4f98d681453b4fe41d38"
   }
 }

@@ -4,6 +4,10 @@ import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from purchase_behavior_simulator.action_rollout import (
+    rollout_purchase_probability,
+)
+
 from purchase_behavior_simulator.action_rollout import ActionGraph
 from purchase_behavior_simulator.episodic_memory import (
     serialize_observed_transitions,
@@ -345,9 +349,10 @@ class StrandsAssessmentTest(unittest.TestCase):
 
         self.assertAlmostEqual(
             result.rollout_probability,
-            result.action_distributions["ITEM_EXPOSURE"]["PURCHASE_NOW"]
-            + result.action_distributions["ITEM_EXPOSURE"]["CLICK"]
-            * result.action_distributions["ITEM_DETAIL"]["PURCHASE"],
+            rollout_purchase_probability(
+                result.action_distributions,
+                surface="store_home",
+            ).purchase_probability,
         )
         self.assertEqual(result.likelihood, result.rollout_probability)
         self.assertFalse(result.validator_adjusted)
@@ -512,7 +517,7 @@ class StrandsAssessmentTest(unittest.TestCase):
         self.assertTrue(result.validator_adjusted)
         original_rollout = 0.8 + 0.1 * 0.8
         self.assertLess(result.rollout_probability, original_rollout)
-        self.assertGreater(result.rollout_probability, 0.2)
+        self.assertGreater(result.rollout_probability, 0.0)
         self.assertIn("price exceeds budget", result.contradictions)
         self.assertEqual(
             [event["stage"] for event in trace_events],

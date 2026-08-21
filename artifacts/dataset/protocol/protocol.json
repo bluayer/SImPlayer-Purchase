@@ -1,8 +1,8 @@
 {
-  "run_id": "adapter-labeled-20260819-ad48655edb66",
+  "run_id": "adapter-long-path-v2-labeled-20260824-e62bb2760872",
   "users": 20,
   "history_fraction": 0.5,
-  "history_impressions_per_user": 50,
+  "history_transition_limit": 16,
   "candidate_cases": 500,
   "ratio_specs": {
     "1:1": [10, 10],
@@ -12,26 +12,43 @@
   "natural_metrics": {
     "protocol": {
       "adapter_schema": "simuser.canonical-dataset.v2",
-      "dataset_name": "labeled",
+      "dataset_name": "long-path-v2-labeled",
       "sampling": "uniform-within-user temporal holdout",
+      "history_unit": "observed_transitions",
+      "history_transition_limit": 16,
       "cases_per_user": 25,
       "complete_exposure": true,
-      "purchase_rate": 0.054,
+      "purchase_rate": 0.058,
       "oracle_available": true,
+      "recent_history": {
+        "cases_with_prior_purchase": 189,
+        "coverage_rate": 0.378
+      },
       "validation": {
-        "dataset_name": "labeled",
+        "dataset_name": "long-path-v2-labeled",
         "users": 20,
         "items": 60,
         "impressions": 4000,
         "complete_exposure": true,
-        "purchases": 177,
-        "clicks": 796,
+        "purchases": 246,
+        "clicks": 1059,
         "action_counts": {
-          "ITEM_DETAIL:BACK": 906,
-          "ITEM_DETAIL:PURCHASE": 165,
-          "ITEM_EXPOSURE:CLICK": 731,
-          "ITEM_EXPOSURE:PURCHASE_NOW": 12,
-          "ITEM_EXPOSURE:SKIP": 2917
+          "CURRENCY_SHORTFALL:BACK_TO_ITEM": 4,
+          "CURRENCY_SHORTFALL:EXIT": 5,
+          "CURRENCY_SHORTFALL:OPEN_TOP_UP": 12,
+          "CURRENCY_TOP_UP:CANCEL_TOP_UP": 5,
+          "CURRENCY_TOP_UP:TOP_UP_SUCCESS": 7,
+          "ITEM_DETAIL:BACK": 829,
+          "ITEM_DETAIL:START_PURCHASE": 622,
+          "ITEM_EXPOSURE:CLICK": 723,
+          "ITEM_EXPOSURE:EXIT": 1736,
+          "ITEM_EXPOSURE:PURCHASE_NOW": 21,
+          "ITEM_EXPOSURE:SKIP": 2013,
+          "PAYMENT_PROCESSING:INSUFFICIENT_CURRENCY": 16,
+          "PAYMENT_PROCESSING:PAYMENT_FAILED": 171,
+          "PAYMENT_PROCESSING:PAYMENT_SUCCESS": 246,
+          "PURCHASE_CONFIRMATION:CANCEL": 388,
+          "PURCHASE_CONFIRMATION:CONFIRM_PURCHASE": 433
         },
         "game_state": {
           "coverage": {
@@ -45,14 +62,14 @@
             "owned_item_ids": 1.0
           },
           "unique_values": {
-            "currency_balance": 3443,
-            "progression_need": 3864,
-            "recent_failure_intensity": 3834,
+            "currency_balance": 3497,
+            "progression_need": 3868,
+            "recent_failure_intensity": 3844,
             "inventory_overlap": 4,
-            "event_urgency": 1661,
-            "purchase_cooldown": 3851,
-            "current_goals": 47,
-            "owned_item_ids": 78
+            "event_urgency": 1497,
+            "purchase_cooldown": 3923,
+            "current_goals": 48,
+            "owned_item_ids": 149
           }
         }
       }

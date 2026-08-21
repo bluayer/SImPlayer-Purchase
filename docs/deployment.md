@@ -236,6 +236,8 @@ simulate
 
 허용 source는 `external_observation`, `historical_import`, `experiment_observation`이다. 모델 prediction, synthetic label, counterfactual 결과는 Memory에 기록하지 않는다.
 
+`SimulationRequest.interactions`는 optional recent-session hint다. Production bootstrap은 노출, 상세 열기, 구매 시작, 확인, 결제 성공·실패, 잔액 부족과 충전 action의 전체 `state/action/next_state` transition을 AgentCore Memory에 적재한다. Request history가 비어 있어도 long-term Memory retrieval이 장기 관측 경로를 보완한다.
+
 observation ingestion은 안정적인 write path를 위해 기본적으로 deterministic reflection을 사용한다. LLM reflection이 필요한 실험에서만 `PURCHASE_BEHAVIOR_REFLECTION_MODE=llm`으로 명시적으로 활성화한다.
 
 ## Neptune
@@ -247,6 +249,7 @@ observation ingestion은 안정적인 write path를 위해 기본적으로 deter
 - Runtime role에는 필요한 read와 검증된 record write 권한만 부여한다.
 - `bedrock-mantle:CallWithBearerToken`은 resource-level scope를 지원하지 않아 유일하게 `Resource: '*'`를 사용하며 `SHORT_TERM` token 조건으로 제한한다. 실제 inference 생성 권한은 대상 계정의 `project/default` ARN으로 제한한다.
 - bulk loader는 별도 stack과 S3 prefix를 사용한다.
+- Production export는 관측된 각 action을 별도 user-item edge로 저장하고 `state`와 `nextState`를 함께 기록한다.
 - bootstrap loader bucket은 encryption, public-access block과 versioning을 사용한다.
 - private VPC에 S3 gateway endpoint가 없으면 loader stack이 대상 subnet route table에 생성한다.
 - synthetic graph는 운영 graph와 namespace 및 load manifest를 분리한다.
@@ -279,7 +282,7 @@ PYTHONPATH=src python scripts/run_agentcore_custom_evaluation.py --help
 - live Neptune query와 실제 model `simulate` HTTP 200
 - production artifact dry-run과 bootstrap canary 통과
 - `simulate` 응답에 scalar/trajectory 구매확률, action distribution, likely trajectory 포함
-- local model-backed evaluation 200/200 성공, final fallback 0
+- local model-backed graph v3 long-path evaluation 200/200 성공, final fallback 0
 
 소스나 action graph가 변경된 뒤에는 과거 배포 상태를 근거로 삼지 않는다. 최종 artifact는 반드시 다음 명령으로 대상 계정에서 다시 검증한다.
 

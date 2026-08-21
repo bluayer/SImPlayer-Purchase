@@ -3,6 +3,9 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timezone
 
+from purchase_behavior_simulator.action_rollout import (
+    rollout_purchase_probability,
+)
 from purchase_behavior_simulator.models import (
     BehaviorEvent,
     EpisodicMemoryEvidence,
@@ -106,9 +109,19 @@ class FixedActionAssessmentProvider:
                     "PURCHASE_NOW": 0.2,
                 },
                 "ITEM_DETAIL": {
-                    "PURCHASE": 0.15,
+                    "START_PURCHASE": 0.15,
                     "BACK": 0.65,
                     "EXIT": 0.2,
+                },
+                "PURCHASE_CONFIRMATION": {
+                    "CONFIRM_PURCHASE": 1.0,
+                    "CANCEL": 0.0,
+                    "EXIT": 0.0,
+                },
+                "PAYMENT_PROCESSING": {
+                    "PAYMENT_SUCCESS": 1.0,
+                    "INSUFFICIENT_CURRENCY": 0.0,
+                    "PAYMENT_FAILED": 0.0,
                 },
             },
             decision_state={"feasibility": 0.8},
@@ -167,7 +180,7 @@ class ServiceTest(unittest.TestCase):
             0.98,
         )
         self.assertEqual(
-            event["action_distributions"]["ITEM_DETAIL"]["PURCHASE"],
+            event["action_distributions"]["ITEM_DETAIL"]["START_PURCHASE"],
             0.0,
         )
 
@@ -206,7 +219,11 @@ class ServiceTest(unittest.TestCase):
         )
         self.assertAlmostEqual(
             payload["trajectory_purchase_probability"],
-            0.2 + 0.4 * 0.15,
+            rollout_purchase_probability(
+                payload["action_distributions"],
+                surface="store_home",
+            ).purchase_probability,
+            places=6,
         )
         self.assertEqual(
             payload["action_distributions"]["ITEM_EXPOSURE"]["CLICK"],

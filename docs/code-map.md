@@ -30,12 +30,12 @@ Scalar와 trajectory 구매확률은 서로 다른 후보 출력이며 `Simulati
 
 ## 4. Memory와 Graph
 
-- `episodic_memory.py`: observation/transition/reflection 직렬화, reranking과 구매/비구매 대조 evidence 선택
+- `episodic_memory.py`: 전체 action path의 observation/transition/reflection 직렬화, reranking과 구매/비구매 대조 evidence 선택
 - `episodic_reasoning.py`: self-ask query와 reflection
 - `agentcore_memory.py`: AgentCore Memory data-plane adapter
-- `neptune_graph.py`: PathSim-style graph evidence adapter
+- `neptune_graph.py`: 모든 관측 action edge와 상품 관계를 사용하는 PathSim-style graph evidence adapter
 
-prediction과 counterfactual은 Memory에 쓰지 않는다. 외부 관측 사실만 기록한다.
+`SimulationRequest.interactions`는 optional recent-session hint다. 장기 이력은 AgentCore Memory와 Neptune에서 검색한다. Prediction과 counterfactual은 두 저장소에 쓰지 않고 외부에서 관측된 `state/action/next_state` 사실만 기록한다.
 
 ## 5. 데이터와 평가
 

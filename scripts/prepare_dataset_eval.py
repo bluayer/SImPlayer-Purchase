@@ -13,6 +13,7 @@ from purchase_behavior_simulator.dataset_adapter import (
     CanonicalJsonlDatasetAdapter,
     EvaluationProtocolBuilder,
     ProtocolBuildConfig,
+    build_path_coverage_protocol,
 )
 from purchase_behavior_simulator.evaluation import save_protocol
 
@@ -27,10 +28,19 @@ def main() -> None:
     )
     parser.add_argument("--canonical-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--coverage-output-dir",
+        type=Path,
+        help=(
+            "Optional separate protocol containing rare observable paths. "
+            "Its frequencies are diagnostic and not natural-distribution metrics."
+        ),
+    )
+    parser.add_argument("--coverage-cases", type=int, default=100)
     parser.add_argument("--users", type=int, default=20)
     parser.add_argument("--cases-per-user", type=int, default=25)
     parser.add_argument("--history-fraction", type=float, default=0.5)
-    parser.add_argument("--history-limit", type=int, default=50)
+    parser.add_argument("--history-limit", type=int, default=16)
     parser.add_argument("--seed", type=int, default=20260819)
     parser.add_argument("--exclude-users", nargs="*", default=())
     parser.add_argument("--allow-incomplete-exposure", action="store_true")
@@ -59,6 +69,13 @@ def main() -> None:
         ),
     ).build()
     save_protocol(protocol, args.output_dir)
+    coverage_protocol = None
+    if args.coverage_output_dir is not None:
+        coverage_protocol = build_path_coverage_protocol(
+            protocol,
+            max_cases=args.coverage_cases,
+        )
+        save_protocol(coverage_protocol, args.coverage_output_dir)
     print(
         json.dumps(
             {
@@ -70,6 +87,16 @@ def main() -> None:
                     "purchase_rate"
                 ],
                 "answer_key_created": True,
+                "coverage_output_dir": (
+                    str(args.coverage_output_dir)
+                    if args.coverage_output_dir is not None
+                    else None
+                ),
+                "coverage_cases": (
+                    len(coverage_protocol.cases)
+                    if coverage_protocol is not None
+                    else 0
+                ),
                 "game_state": protocol.natural_metrics["protocol"][
                     "validation"
                 ]["game_state"],

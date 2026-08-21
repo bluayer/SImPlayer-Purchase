@@ -22,8 +22,11 @@ RETURN type(relation) AS relationType, neighbor.nodeId AS neighborId
 HISTORY_NEIGHBORS_QUERY = """
 MATCH (user:User {userId: $userId})-[interaction]->(source:Item)
 WHERE type(interaction) IN [
-  'VIEWED', 'CLICKED', 'TRIED_ON', 'EQUIPPED', 'USED',
-  'PURCHASED', 'DISMISSED', 'REFUNDED'
+  'VIEWED', 'CLICK', 'CLICKED', 'START_PURCHASE', 'CONFIRM_PURCHASE',
+  'PAYMENT_SUCCESS', 'PURCHASED', 'INSUFFICIENT_CURRENCY',
+  'OPEN_TOP_UP', 'TOP_UP_SUCCESS', 'PAYMENT_FAILED', 'CANCEL',
+  'CANCEL_TOP_UP', 'BACK', 'BACK_TO_ITEM', 'SKIP', 'DISMISSED',
+  'EXIT', 'PURCHASE_NOW', 'TRIED_ON', 'EQUIPPED', 'USED', 'REFUNDED'
 ]
 WITH source, interaction
 ORDER BY interaction.timestamp DESC
@@ -56,12 +59,27 @@ class NeptuneGraphConfig:
     interaction_weights: Mapping[str, float] = field(
         default_factory=lambda: {
             "VIEWED": 0.08,
+            "CLICK": 0.20,
             "CLICKED": 0.20,
+            "START_PURCHASE": 0.45,
+            "CONFIRM_PURCHASE": 0.70,
+            "PAYMENT_SUCCESS": 1.00,
             "TRIED_ON": 0.35,
             "EQUIPPED": 0.55,
             "USED": 0.65,
             "PURCHASED": 1.00,
+            "INSUFFICIENT_CURRENCY": 0.35,
+            "OPEN_TOP_UP": 0.55,
+            "TOP_UP_SUCCESS": 0.80,
+            "PAYMENT_FAILED": -0.45,
+            "CANCEL": -0.35,
+            "CANCEL_TOP_UP": -0.45,
+            "BACK": -0.15,
+            "BACK_TO_ITEM": -0.10,
+            "SKIP": -0.25,
             "DISMISSED": -0.25,
+            "EXIT": -0.30,
+            "PURCHASE_NOW": 0.55,
             "REFUNDED": -1.00,
         }
     )

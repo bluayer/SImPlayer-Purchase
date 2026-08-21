@@ -152,7 +152,7 @@ class EpisodicMemoryTest(unittest.TestCase):
 
         self.assertEqual(
             [transition.action for transition in decoded],
-            ["CLICK", "BACK"],
+            ["CLICK", "BACK", "SKIP"],
         )
         self.assertNotIn("counterfactual", encoded.lower())
 

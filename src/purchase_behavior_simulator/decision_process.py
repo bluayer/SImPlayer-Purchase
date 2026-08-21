@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass, replace
 from typing import Any, Mapping, Sequence
 
 from .action_rollout import (
+    ActionGraph,
+    DEFAULT_ACTION_GRAPH,
     limit_action_distribution_revision,
     normalize_action_distributions,
     rollout_purchase_probability,
@@ -38,6 +40,7 @@ class DecisionState:
     hesitation: float
     evidence_confidence: float
     state_confidence: float
+    exit_pressure: float
     repeat_purchase_plausible: bool
 
     @property
@@ -179,6 +182,9 @@ def build_decision_state(request: SimulationRequest) -> DecisionState:
         + 0.15 * (1.0 - urgency)
         + 0.15 * ownership_pressure
     )
+    exit_pressure = _clamp(
+        0.25 + 0.45 * request.context.session_fatigue
+    )
     return DecisionState(
         need_strength=need_strength,
         selection_strength=selection_strength,
@@ -188,6 +194,7 @@ def build_decision_state(request: SimulationRequest) -> DecisionState:
         hesitation=hesitation,
         evidence_confidence=evidence_confidence,
         state_confidence=state_confidence,
+        exit_pressure=exit_pressure,
         repeat_purchase_plausible=repeat_purchase_plausible,
     )
 
@@ -266,52 +273,61 @@ def apply_commitment_gate(
     intentions: Mapping[str, float] | None = None,
     *,
     max_total_variation: float = 0.08,
+    graph: ActionGraph | None = None,
 ) -> CommitmentResult:
-    proposed = normalize_action_distributions(distributions)
+    graph = graph or DEFAULT_ACTION_GRAPH
+    proposed = normalize_action_distributions(distributions, graph=graph)
     intent = _normalize(intentions or intentions_from_state(state))
+    non_engagement = intent["DEFER"] + intent["REJECT"]
     exposure_target = {
         "CLICK": intent["EXPLORE"] + 0.15 * intent["DEFER"],
-        "SKIP": 0.85 * intent["DEFER"] + 0.80 * intent["REJECT"],
-        "EXIT": 0.20 * intent["REJECT"],
+        "SKIP": non_engagement * (1.0 - state.exit_pressure),
+        "EXIT": non_engagement * state.exit_pressure,
         "PURCHASE_NOW": intent["BUY_NOW"] * (0.25 + 0.75 * state.urgency),
     }
+    leave_detail = intent["DEFER"] + intent["EXPLORE"] + intent["REJECT"]
     detail_target = {
-        "PURCHASE": intent["BUY_NOW"],
-        "BACK": (
-            0.80 * intent["DEFER"]
-            + 0.55 * intent["EXPLORE"]
-            + 0.80 * intent["REJECT"]
-        ),
-        "EXIT": (
-            0.20 * intent["DEFER"]
-            + 0.45 * intent["EXPLORE"]
-            + 0.20 * intent["REJECT"]
-        ),
+        "START_PURCHASE": intent["BUY_NOW"],
+        "BACK": leave_detail,
+    }
+    confirmation_target = {
+        "CONFIRM_PURCHASE": intent["BUY_NOW"],
+        "CANCEL": intent["EXPLORE"] + intent["DEFER"] + intent["REJECT"],
     }
     target = normalize_action_distributions(
         {
             "ITEM_EXPOSURE": exposure_target,
             "ITEM_DETAIL": detail_target,
-        }
+            "PURCHASE_CONFIRMATION": confirmation_target,
+        },
+        graph=graph,
     )
     influence = min(
         0.18,
         0.18 * state.state_confidence * state.evidence_confidence,
     )
-    requested = {
-        state_name: {
+    adjusted_states = {
+        "ITEM_EXPOSURE",
+        "ITEM_DETAIL",
+        "PURCHASE_CONFIRMATION",
+    }
+    requested = {}
+    for state_name, action_values in proposed.items():
+        if state_name not in adjusted_states:
+            requested[state_name] = dict(action_values)
+            continue
+        requested[state_name] = {
             action: (
                 (1.0 - influence) * probability
                 + influence * target[state_name][action]
             )
             for action, probability in action_values.items()
         }
-        for state_name, action_values in proposed.items()
-    }
     revised = limit_action_distribution_revision(
         proposed,
         requested,
         max_total_variation=max_total_variation,
+        graph=graph,
     )
     variation = {
         state_name: 0.5
@@ -334,12 +350,19 @@ def evaluate_counterfactual_consistency(
     base_distributions: Mapping[str, Mapping[str, float]],
     current_distributions: Mapping[str, Mapping[str, float]],
     current_state: DecisionState,
+    *,
+    graph: ActionGraph | None = None,
 ) -> CounterfactualResult:
-    base = normalize_action_distributions(base_distributions)
-    current = normalize_action_distributions(current_distributions)
+    graph = graph or DEFAULT_ACTION_GRAPH
+    base = normalize_action_distributions(base_distributions, graph=graph)
+    current = normalize_action_distributions(
+        current_distributions,
+        graph=graph,
+    )
     current_probability = rollout_purchase_probability(
         current,
         surface=request.context.surface,
+        graph=graph,
     ).purchase_probability
     scenarios: dict[str, DecisionState] = {
         "price_increase": replace(
@@ -385,10 +408,12 @@ def evaluate_counterfactual_consistency(
             base,
             scenario_state,
             intentions_from_state(scenario_state),
+            graph=graph,
         )
         probability = rollout_purchase_probability(
             scenario_result.distributions,
             surface=request.context.surface,
+            graph=graph,
         ).purchase_probability
         probabilities[name] = probability
         checks[name] = probability <= current_probability + 1e-9

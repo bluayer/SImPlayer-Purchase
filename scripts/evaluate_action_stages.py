@@ -143,6 +143,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "observed_detail_action": answer.get(
                         "observed_detail_action"
                     ),
+                    "observed_action_path": answer.get(
+                        "observed_action_path",
+                        (),
+                    ),
                     "action_distributions": stage_distribution(
                         prediction,
                         trace_stage,

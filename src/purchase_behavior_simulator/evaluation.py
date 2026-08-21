@@ -240,6 +240,7 @@ class HoldoutCase:
     observed_initial_state: str
     observed_next_action: str
     observed_detail_action: str | None
+    observed_action_path: tuple[str, ...]
     ratio_membership: tuple[str, ...]
     request: Mapping[str, Any]
 
@@ -255,7 +256,7 @@ class HoldoutProtocol:
     run_id: str
     users: int
     history_fraction: float
-    history_impressions_per_user: int
+    history_transition_limit: int
     cases: tuple[HoldoutCase, ...]
     bootstrap_payloads: tuple[Mapping[str, Any], ...]
     natural_metrics: Mapping[str, Any]
@@ -283,6 +284,55 @@ def observed_action_labels(
         "ITEM_EXPOSURE",
         "PURCHASE_NOW" if purchased else "SKIP",
         None,
+    )
+
+
+def observed_action_path(
+    row: Mapping[str, Any],
+) -> tuple[str, tuple[str, ...]]:
+    saved = row.get("observed_action_path")
+    initial, next_action, detail_action = observed_action_labels(row)
+    if saved:
+        return initial, tuple(str(value).upper() for value in saved)
+    if initial == "ITEM_EXPOSURE" and next_action == "CLICK":
+        return (
+            initial,
+            (
+                "CLICK",
+                *(
+                    (
+                        "START_PURCHASE",
+                        "CONFIRM_PURCHASE",
+                        "PAYMENT_SUCCESS",
+                    )
+                    if detail_action == "PURCHASE"
+                    else ("BACK", "SKIP")
+                ),
+            ),
+        )
+    if next_action in {"PURCHASE", "PURCHASE_NOW"}:
+        return (
+            initial,
+            (
+                *(
+                    ("PURCHASE_NOW",)
+                    if initial == "ITEM_EXPOSURE"
+                    else ("START_PURCHASE",)
+                ),
+                "CONFIRM_PURCHASE",
+                "PAYMENT_SUCCESS",
+            ),
+        )
+    return (
+        initial,
+        (
+            next_action,
+            *(
+                ("SKIP",)
+                if initial == "ITEM_DETAIL" and next_action == "BACK"
+                else ()
+            ),
+        ),
     )
 
 
@@ -568,7 +618,7 @@ def prepare_protocol(
     *,
     selected_users: int = 10,
     history_fraction: float = 0.5,
-    history_limit: int = 50,
+    history_limit: int = 16,
     seed: int = 20260818,
     excluded_user_ids: Sequence[str] = (),
     compute_natural_metrics: bool = True,
@@ -711,6 +761,7 @@ def prepare_protocol(
                     observed_next_action,
                     observed_detail_action,
                 ) = observed_action_labels(row)
+                _, saved_action_path = observed_action_path(row)
                 cases.append(
                     HoldoutCase(
                         case_id=f"{user_id}:{row['item_id']}",
@@ -725,6 +776,7 @@ def prepare_protocol(
                         observed_initial_state=observed_initial_state,
                         observed_next_action=observed_next_action,
                         observed_detail_action=observed_detail_action,
+                        observed_action_path=saved_action_path,
                         ratio_membership=memberships,
                         request=request,
                     )
@@ -745,7 +797,7 @@ def prepare_protocol(
         run_id=run_id,
         users=selected_users,
         history_fraction=history_fraction,
-        history_impressions_per_user=history_limit,
+        history_transition_limit=history_limit,
         cases=tuple(cases),
         bootstrap_payloads=tuple(bootstrap_payloads),
         natural_metrics=natural_metrics,
@@ -836,6 +888,9 @@ def save_protocol(protocol: HoldoutProtocol, output_dir: Path) -> None:
                 "observed_initial_state": case.observed_initial_state,
                 "observed_next_action": case.observed_next_action,
                 "observed_detail_action": case.observed_detail_action,
+                "observed_action_path": list(
+                    case.observed_action_path
+                ),
                 "ratio_membership": case.ratio_membership,
             }
             for case in protocol.cases
@@ -847,9 +902,7 @@ def save_protocol(protocol: HoldoutProtocol, output_dir: Path) -> None:
                 "run_id": protocol.run_id,
                 "users": protocol.users,
                 "history_fraction": protocol.history_fraction,
-                "history_impressions_per_user": (
-                    protocol.history_impressions_per_user
-                ),
+                "history_transition_limit": protocol.history_transition_limit,
                 "candidate_cases": len(protocol.cases),
                 "ratio_specs": RATIO_SPECS,
                 "natural_metrics": protocol.natural_metrics,
@@ -928,9 +981,7 @@ def run_live_evaluation(
             "run_id": protocol.run_id,
             "users": protocol.users,
             "history_fraction": protocol.history_fraction,
-            "history_impressions_per_user": (
-                protocol.history_impressions_per_user
-            ),
+            "history_transition_limit": protocol.history_transition_limit,
             "candidate_cases": len(protocol.cases),
             "successful_cases": len(scored_cases),
             "failed_cases": len(errors),
@@ -987,8 +1038,8 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         f"- Users: {report['protocol']['users']}",
         f"- History/holdout: {report['protocol']['history_fraction']:.0%} / "
         f"{1.0 - report['protocol']['history_fraction']:.0%}",
-        f"- Memory history: latest "
-        f"{report['protocol']['history_impressions_per_user']} impressions per user",
+        f"- Recent request history: latest "
+        f"{report['protocol']['history_transition_limit']} observed transitions",
         f"- Live Agent cases: {report['protocol']['successful_cases']} "
         f"(failed {report['protocol']['failed_cases']})",
         "- No learned CVR/base probability",
@@ -1043,7 +1094,7 @@ def main() -> None:
     parser.add_argument("--runtime-arn")
     parser.add_argument("--users", type=int, default=10)
     parser.add_argument("--history-fraction", type=float, default=0.5)
-    parser.add_argument("--history-limit", type=int, default=50)
+    parser.add_argument("--history-limit", type=int, default=16)
     parser.add_argument("--seed", type=int, default=20260818)
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--exclude-users", nargs="*", default=())

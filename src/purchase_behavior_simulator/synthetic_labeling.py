@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from .action_rollout import DEFAULT_ACTION_GRAPH
 from .scoring import clamp
 from .synthetic import SyntheticAssumptions
 from .synthetic_oracle import (
@@ -162,7 +163,8 @@ class SyntheticDatasetLabeler:
                 latent_shock=float(oracle["latent_shock"]),
             )
 
-            clicked = self.rng.random() < float(
+            starts_at_detail = str(scenario["surface"]) == "checkout"
+            clicked = starts_at_detail or self.rng.random() < float(
                 probabilities["click"]
             )
             purchase_probability = (
@@ -171,6 +173,18 @@ class SyntheticDatasetLabeler:
                 else float(probabilities["direct_purchase"])
             )
             purchased = self.rng.random() < purchase_probability
+            (
+                observed_initial_state,
+                observed_action_path,
+                topped_up,
+            ) = self._sample_observed_action_path(
+                clicked=clicked,
+                purchased=purchased,
+                user=user,
+                item=item,
+                scenario=scenario,
+                game_state=game_state,
+            )
             oracle_payload = {
                 "ground_truth_click_probability": round(
                     probabilities["click"],
@@ -224,15 +238,17 @@ class SyntheticDatasetLabeler:
                     },
                     "clicked": int(clicked),
                     "purchased": int(purchased),
+                    "observed_initial_state": observed_initial_state,
+                    "observed_action_path": observed_action_path,
                 }
             )
 
-            event_types = ["VIEWED"]
-            if clicked:
-                event_types.append("CLICKED")
-            if purchased:
-                event_types.append("PURCHASED")
+            event_types = ["VIEWED", *observed_action_path]
             for offset, event_type in enumerate(event_types):
+                normalized_event_type = {
+                    "CLICK": "CLICKED",
+                    "PAYMENT_SUCCESS": "PURCHASED",
+                }.get(event_type, event_type)
                 event = {
                     "event_id": f"evt-{len(events):010d}",
                     "impression_id": impression_id,
@@ -240,15 +256,19 @@ class SyntheticDatasetLabeler:
                     "timestamp": (timestamp + timedelta(seconds=offset * 2)).isoformat(),
                     "user_id": scenario["user_id"],
                     "item_id": scenario["item_id"],
-                    "event_type": event_type,
+                    "event_type": normalized_event_type,
                     "synthetic": True,
                 }
                 events.append(event)
                 behavior_edges.append(self._behavior_edge(event))
-                item_stats[item_id][event_type] += 1
-                user_item_stats[(user_id, item_id)][event_type] += 1
+                item_stats[item_id][normalized_event_type] += 1
+                user_item_stats[(user_id, item_id)][
+                    normalized_event_type
+                ] += 1
 
             if purchased:
+                if topped_up:
+                    self._apply_top_up(state, item)
                 self._apply_purchase(
                     state,
                     item,
@@ -304,6 +324,106 @@ class SyntheticDatasetLabeler:
             json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return report
+
+    def _sample_observed_action_path(
+        self,
+        *,
+        clicked: bool,
+        purchased: bool,
+        user: Mapping[str, Any],
+        item: Mapping[str, Any],
+        scenario: Mapping[str, Any],
+        game_state: Mapping[str, Any],
+    ) -> tuple[str, list[str], bool]:
+        """Sample only UI and transaction events that can be instrumented."""
+        starts_at_detail = str(scenario["surface"]) == "checkout"
+        initial_state = "ITEM_DETAIL" if starts_at_detail else "ITEM_EXPOSURE"
+        state = initial_state
+        actions: list[str] = []
+
+        def take(action: str) -> None:
+            nonlocal state
+            transition = DEFAULT_ACTION_GRAPH.transition(state, action)
+            actions.append(action)
+            state = transition.next_state
+
+        if not starts_at_detail:
+            if clicked:
+                take("CLICK")
+            elif purchased:
+                take("PURCHASE_NOW")
+            else:
+                take(
+                    "EXIT"
+                    if self.rng.random()
+                    < 0.25 + 0.45 * float(scenario["session_fatigue"])
+                    else "SKIP"
+                )
+                return initial_state, actions, False
+
+        effective_price = float(item["price"]) * (
+            1.0 - float(item["discount_rate"])
+        )
+        insufficient = (
+            float(game_state["currency_balance"]) + 1e-9
+            < effective_price
+        )
+        hesitation = clamp(
+            0.18
+            + 0.30 * float(user["price_sensitivity"])
+            + 0.18 * float(scenario["session_fatigue"])
+            - 0.15 * float(game_state["event_urgency"])
+        )
+
+        if not purchased:
+            if self.rng.random() >= 0.38 + 0.22 * hesitation:
+                take("BACK")
+                take("EXIT" if self.rng.random() < 0.35 else "SKIP")
+                return initial_state, actions, False
+
+            take("START_PURCHASE")
+            if self.rng.random() < 0.42 + 0.35 * hesitation:
+                take("CANCEL")
+                take("BACK")
+                take("EXIT" if self.rng.random() < 0.45 else "SKIP")
+                return initial_state, actions, False
+
+            take("CONFIRM_PURCHASE")
+            if insufficient:
+                take("INSUFFICIENT_CURRENCY")
+                if self.rng.random() < 0.35:
+                    take("OPEN_TOP_UP")
+                    take("CANCEL_TOP_UP")
+                    take("EXIT")
+                else:
+                    take("BACK_TO_ITEM")
+                    take("BACK")
+                    take("EXIT")
+            else:
+                take("PAYMENT_FAILED")
+                take("CANCEL")
+                take("BACK")
+                take("EXIT")
+            return initial_state, actions, False
+
+        if state == "ITEM_DETAIL":
+            take("START_PURCHASE")
+        if self.rng.random() < 0.12 * hesitation:
+            take("CANCEL")
+            take("START_PURCHASE")
+        take("CONFIRM_PURCHASE")
+        topped_up = False
+        if insufficient:
+            take("INSUFFICIENT_CURRENCY")
+            take("OPEN_TOP_UP")
+            take("TOP_UP_SUCCESS")
+            topped_up = True
+            take("CONFIRM_PURCHASE")
+        elif self.rng.random() < 0.04:
+            take("PAYMENT_FAILED")
+            take("CONFIRM_PURCHASE")
+        take("PAYMENT_SUCCESS")
+        return initial_state, actions, topped_up
 
     @staticmethod
     def _verify_source_files(
@@ -528,6 +648,19 @@ class SyntheticDatasetLabeler:
         )
 
     @staticmethod
+    def _apply_top_up(
+        state: UserDynamicState,
+        item: Mapping[str, Any],
+    ) -> None:
+        effective_price = float(item["price"]) * (
+            1.0 - float(item["discount_rate"])
+        )
+        state.currency_balance = max(
+            state.currency_balance,
+            effective_price * 1.5,
+        )
+
+    @staticmethod
     def _record_counterfactual_checks(
         checks: Counter[str],
         *,
@@ -715,6 +848,14 @@ class SyntheticDatasetLabeler:
         high_rate = sum(
             int(row["purchased"]) for row in sorted_by_affinity[-decile:]
         ) / decile
+        low_expected_rate = sum(
+            float(row["ground_truth_purchase_probability"])
+            for row in sorted_by_affinity[:decile]
+        ) / decile
+        high_expected_rate = sum(
+            float(row["ground_truth_purchase_probability"])
+            for row in sorted_by_affinity[-decile:]
+        ) / decile
         splits = Counter(str(row["split"]) for row in impressions)
         state_fields = (
             "currency_balance",
@@ -757,9 +898,17 @@ class SyntheticDatasetLabeler:
             for name, total in counterfactual_checks.items()
             if name.endswith(":total")
         }
+        path_lengths = [
+            len(row.get("observed_action_path", ()))
+            for row in impressions
+        ]
+        path_signatures = Counter(
+            " → ".join(row.get("observed_action_path", ()))
+            for row in impressions
+        )
         quality_gates = {
             "non_degenerate_purchase_rate": 0.005 < purchase_rate < 0.40,
-            "affinity_direction": high_rate > low_rate,
+            "affinity_direction": high_expected_rate > low_expected_rate,
             "all_temporal_splits_present": all(
                 splits.get(name, 0) > 0 for name in ("train", "validation", "test")
             ),
@@ -782,6 +931,10 @@ class SyntheticDatasetLabeler:
                 value == 1.0
                 for value in counterfactual_pass_rates.values()
             ),
+            "long_action_paths_present": any(
+                length >= 4 for length in path_lengths
+            ),
+            "diverse_action_paths": len(path_signatures) >= 8,
         }
         return {
             "counts": {
@@ -797,6 +950,14 @@ class SyntheticDatasetLabeler:
                 ),
                 "high_affinity_purchase": round(high_rate, 8),
                 "low_affinity_purchase": round(low_rate, 8),
+                "high_affinity_expected_purchase": round(
+                    high_expected_rate,
+                    8,
+                ),
+                "low_affinity_expected_purchase": round(
+                    low_expected_rate,
+                    8,
+                ),
             },
             "oracle_metrics": {
                 "brier": round(brier, 8),
@@ -811,6 +972,22 @@ class SyntheticDatasetLabeler:
             "counterfactual_pass_rates": (
                 counterfactual_pass_rates
             ),
+            "action_paths": {
+                "unique": len(path_signatures),
+                "mean_length": round(
+                    sum(path_lengths) / max(1, len(path_lengths)),
+                    8,
+                ),
+                "max_length": max(path_lengths, default=0),
+                "length_at_least_4_rate": round(
+                    sum(length >= 4 for length in path_lengths)
+                    / max(1, len(path_lengths)),
+                    8,
+                ),
+                "top_signatures": dict(
+                    path_signatures.most_common(20)
+                ),
+            },
             "quality_gates": {
                 **quality_gates,
                 "all_passed": all(quality_gates.values()),

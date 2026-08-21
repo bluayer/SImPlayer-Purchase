@@ -28,11 +28,36 @@ class ActionRolloutTest(unittest.TestCase):
 
         self.assertEqual(graph.to_dict(), DEFAULT_ACTION_GRAPH.to_dict())
 
+    def test_default_graph_separates_user_actions_from_environment_events(
+        self,
+    ) -> None:
+        self.assertEqual(
+            DEFAULT_ACTION_GRAPH.transition(
+                "PURCHASE_CONFIRMATION",
+                "CONFIRM_PURCHASE",
+            ).kind,
+            "user_action",
+        )
+        self.assertEqual(
+            DEFAULT_ACTION_GRAPH.transition(
+                "PAYMENT_PROCESSING",
+                "PAYMENT_FAILED",
+            ).kind,
+            "environment_event",
+        )
+        self.assertAlmostEqual(
+            DEFAULT_ACTION_GRAPH.base_distribution_weight,
+            0.25,
+        )
+
     def test_environment_rejects_impossible_transition(self) -> None:
         environment = DeterministicStoreEnvironment()
 
         with self.assertRaises(ValueError):
-            environment.transition(StoreState.ITEM_EXPOSURE, UserAction.PURCHASE)
+            environment.transition(
+                StoreState.ITEM_EXPOSURE,
+                UserAction.CONFIRM_PURCHASE,
+            )
 
     def test_rollout_sums_every_purchase_path(self) -> None:
         result = rollout_purchase_probability(
@@ -44,12 +69,21 @@ class ActionRolloutTest(unittest.TestCase):
                     "PURCHASE_NOW": 0.2,
                 },
                 "ITEM_DETAIL": {
-                    "PURCHASE": 0.3,
-                    "BACK": 0.5,
-                    "EXIT": 0.2,
+                    "START_PURCHASE": 0.3,
+                    "BACK": 0.7,
+                },
+                "PURCHASE_CONFIRMATION": {
+                    "CONFIRM_PURCHASE": 1.0,
+                    "CANCEL": 0.0,
+                },
+                "PAYMENT_PROCESSING": {
+                    "PAYMENT_SUCCESS": 1.0,
+                    "INSUFFICIENT_CURRENCY": 0.0,
+                    "PAYMENT_FAILED": 0.0,
                 },
             },
             surface="store_home",
+            max_depth=4,
         )
 
         self.assertAlmostEqual(
@@ -61,12 +95,21 @@ class ActionRolloutTest(unittest.TestCase):
         result = rollout_purchase_probability(
             {
                 "ITEM_DETAIL": {
-                    "PURCHASE": 0.7,
-                    "BACK": 0.2,
-                    "EXIT": 0.1,
-                }
+                    "START_PURCHASE": 0.7,
+                    "BACK": 0.3,
+                },
+                "PURCHASE_CONFIRMATION": {
+                    "CONFIRM_PURCHASE": 1.0,
+                    "CANCEL": 0.0,
+                },
+                "PAYMENT_PROCESSING": {
+                    "PAYMENT_SUCCESS": 1.0,
+                    "INSUFFICIENT_CURRENCY": 0.0,
+                    "PAYMENT_FAILED": 0.0,
+                },
             },
             surface="checkout",
+            max_depth=3,
         )
 
         self.assertEqual(result.initial_state, StoreState.ITEM_DETAIL)
@@ -81,9 +124,8 @@ class ActionRolloutTest(unittest.TestCase):
                 "PURCHASE_NOW": 0.8,
             },
             "ITEM_DETAIL": {
-                "PURCHASE": 0.8,
-                "BACK": 0.1,
-                "EXIT": 0.1,
+                "START_PURCHASE": 0.8,
+                "BACK": 0.2,
             },
         }
         revised = {
@@ -94,9 +136,8 @@ class ActionRolloutTest(unittest.TestCase):
                 "PURCHASE_NOW": 0.1,
             },
             "ITEM_DETAIL": {
-                "PURCHASE": 0.1,
-                "BACK": 0.5,
-                "EXIT": 0.4,
+                "START_PURCHASE": 0.1,
+                "BACK": 0.9,
             },
         }
 
@@ -106,15 +147,19 @@ class ActionRolloutTest(unittest.TestCase):
             max_total_variation=0.10,
         )
 
+        proposed_normalized = normalize_action_distributions(proposed)
         for state in proposed:
             total_variation = 0.5 * sum(
-                abs(limited[state][action] - proposed[state][action])
-                for action in proposed[state]
+                abs(
+                    limited[state][action]
+                    - proposed_normalized[state][action]
+                )
+                for action in proposed_normalized[state]
             )
             self.assertAlmostEqual(total_variation, 0.10)
         self.assertLess(
             limited["ITEM_EXPOSURE"]["PURCHASE_NOW"],
-            proposed["ITEM_EXPOSURE"]["PURCHASE_NOW"],
+            proposed_normalized["ITEM_EXPOSURE"]["PURCHASE_NOW"],
         )
 
     def test_distributions_are_normalized_without_adding_actions(self) -> None:

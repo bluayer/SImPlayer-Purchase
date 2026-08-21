@@ -75,6 +75,8 @@ purchase-behavior-simulator simulate examples/request.json
 
 이 입력은 persona를 대체하지 않는다. Persona는 장기 성향을, `game_state`는 지금 구매를 실행하거나 미루는 조건을 표현한다.
 
+`interactions`는 optional이다. 제공하면 현재 request 직전의 recent-session hint로 사용한다. 전체 장기 이력을 request에 반복해서 넣을 필요는 없으며, 배포 환경에서는 AgentCore Memory가 관측 episode와 transition을, Neptune이 사용자와 상품 사이의 action edge를 제공한다. 평가 protocol은 최신성 검증을 위해 최대 16개 관측 transition만 request에 포함한다.
+
 기본 action graph는 `src/purchase_behavior_simulator/action_graphs/game-store-purchase.json`에 있다. 다른 게임 UX를 검증할 때는 같은 package 디렉터리에 graph JSON을 추가한다. 필드 정의, 검증 규칙과 Runtime 적용 절차는 [action-graphs.md](action-graphs.md)를 따른다.
 
 ```bash
@@ -115,7 +117,7 @@ PYTHONPATH=src python scripts/run_full_suite.py \
   --model-id "$PURCHASE_BEHAVIOR_MODEL_ID" \
   --limit 1 \
   --workers 1 \
-  --fallback-retries 1
+  --fallback-retries 2
 ```
 
 다음 파일이 생성되면 simulation, action 집계와 stage report가 모두 완료된 것이다.
@@ -138,12 +140,12 @@ PYTHONPATH=src python scripts/run_full_suite.py \
   --limit 200 \
   --workers 1 \
   --confirm-model-cost \
-  --fallback-retries 1
+  --fallback-retries 2
 ```
 
-완료된 첫 case는 checkpoint에서 재사용한다. `--confirm-model-cost`는 200건 model 호출 비용을 확인했다는 명시적 표시다. `--fallback-retries 1`은 실패 또는 fallback case가 있을 때만 해당 case를 한 번 더 호출하고 main result를 교체한 뒤 report를 다시 만든다. 재시도 후에도 정화되지 않은 case가 있으면 output root에 `retry-case-ids.txt`가 남는다.
+완료된 첫 case는 checkpoint에서 재사용한다. `--confirm-model-cost`는 model 호출 비용을 확인했다는 명시적 표시다. `--fallback-retries 2`는 실패 또는 fallback case가 있을 때만 해당 case를 최대 두 번 더 호출하고 main result를 교체한 뒤 report를 다시 만든다. 재시도 후에도 정화되지 않은 case가 있으면 output root에 `retry-case-ids.txt`가 남는다.
 
-현재 공개 결과는 이 200건 실행을 기준으로 한다. 실행 결과와 해석 범위는 [evaluation.md](evaluation.md)에 기록돼 있다.
+현재 공개 결과는 graph v3의 200건 탐색 실행을 기준으로 한다. 실행 결과와 해석 범위는 [evaluation.md](evaluation.md)에 기록돼 있다.
 
 ## 3. AgentCore Runtime 배포
 

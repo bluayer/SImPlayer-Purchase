@@ -53,7 +53,7 @@ Caller
 | AWS integration | Boto3 | AgentCore Memory, Neptune Data API와 배포 보조 API 호출 | AWS SDK 계약과 IAM credential chain을 그대로 사용한다. |
 | Infrastructure | AgentCore CDK + AWS CDK, TypeScript | Runtime, Memory, evaluator, VPC 설정과 IAM 배포 | 리소스 선언과 재배포 절차를 코드로 고정하고 환경별 물리 ID는 local config에서 주입한다. |
 | Observability | CloudWatch/OpenTelemetry + code evaluator | Runtime error, 5xx와 fallback span 검사 | 기본 serving에서는 비활성이고 필요할 때만 managed evaluation을 opt-in한다. |
-| Evaluation | Python checkpoint harness + JSONL | 1건 smoke, 200건 평가, resume와 fallback retry | answer key를 inference와 분리하고 장시간 실행을 case 단위 checkpoint로 복구한다. |
+| Evaluation | Python checkpoint harness + JSONL | 1건 smoke, 현재 200건 탐색 평가, resume와 fallback retry | answer key를 inference와 분리하고 장시간 실행을 case 단위 checkpoint로 복구한다. |
 
 ### 2.3 요청 실행 구조
 
@@ -84,7 +84,7 @@ flowchart LR
     Writer --> Neptune
 ```
 
-AgentCore Gateway는 사용하지 않는다. AgentCore Runtime의 Python application이 VPC 내부에서 Neptune Data API를 호출하고, Strands model adapter로 설정된 foundation model을 호출한다. 배포 모델은 Git에 고정하지 않고 ignored local deployment config에서 선택한다. Git의 compact report는 state-rich protocol의 200건 prefix를 완료한 결과이며, 다른 모델을 사용하면 같은 수치를 기대할 수 없다.
+AgentCore Gateway는 사용하지 않는다. AgentCore Runtime의 Python application이 VPC 내부에서 Neptune Data API를 호출하고, Strands model adapter로 설정된 foundation model을 호출한다. 배포 모델은 Git에 고정하지 않고 ignored local deployment config에서 선택한다. Git의 compact report는 state-rich long-path natural protocol의 graph v3 200건 prefix를 완료한 결과이며, 다른 모델을 사용하면 같은 수치를 기대할 수 없다.
 
 ### 2.4 Dataset lifecycle plane
 
@@ -297,9 +297,12 @@ impression_id, user_id, item_id, timestamp, clicked, purchased
 여러 event를 `impression_id`로 묶는다.
 
 ```text
-IMPRESSION -> CLICK -> PURCHASE
+IMPRESSION -> CLICK -> START_PURCHASE -> CONFIRM_PURCHASE -> PAYMENT_SUCCESS
 IMPRESSION
 IMPRESSION -> CLICK -> BACK
+IMPRESSION -> CLICK -> START_PURCHASE -> CONFIRM_PURCHASE
+           -> INSUFFICIENT_CURRENCY -> OPEN_TOP_UP
+           -> TOP_UP_SUCCESS -> CONFIRM_PURCHASE -> PAYMENT_SUCCESS
 ```
 
 원본 action name은 config의 `action_map`으로 canonical action에 대응시킨다. 동일 impression 안에서 user/item이 바뀌면 validation error다. `IMPRESSION`이 없으면 `SKIP`과 자연 노출 모수를 관측할 수 없으므로 기본적으로 거부한다.
@@ -312,7 +315,7 @@ Configuration 완료 조건:
 2. 모든 impression의 user와 item이 master record에 존재한다.
 3. timestamp가 존재하고 UTC로 정규화 가능하다.
 4. event-row는 impression 단위로 완전히 결합 가능하다.
-5. action이 `IMPRESSION/CLICK/PURCHASE/BACK/EXIT` 중 하나로 매핑된다.
+5. action이 선택한 action graph의 허용 transition에 매핑된다.
 6. cart action은 거부된다.
 7. explicit state/action label이 state machine의 허용 전이와 일치한다.
 8. full-funnel 평가라면 `complete_exposure=true`다.
@@ -321,21 +324,21 @@ Validation manifest에는 user/item/impression 수, click/purchase 수, state별
 
 ### 2.10 Internal EVAL leakage boundary
 
-각 사용자의 impression을 timestamp로 정렬하고 하나의 고정 cutoff를 사용한다.
+각 사용자의 impression을 timestamp로 정렬하고 하나의 cutoff 뒤에서 평가 case를 선택한다.
 
 ```text
 t <= cutoff
   -> persona fallback 계산
   -> AgentCore bootstrap events
-  -> observed transition history
-  -> offline PathSim KG history
+  -> initial AgentCore Memory / offline PathSim KG snapshot
 
 t > cutoff
   -> blind request
+  -> current case 직전까지 실제로 관측된 최대 16 transition
   -> observed next-action answer key
 ```
 
-holdout case A가 case B보다 시간상 앞서더라도 A의 결과를 B의 Memory에 넣지 않는다. 따라서 모든 holdout case가 같은 pre-cutoff snapshot에서 평가된다. Rolling simulation이 필요하면 별도 protocol version으로 만들고, 매 step의 실제 관측만 Memory에 추가해야 한다.
+평가는 rolling-observation protocol이다. Holdout case A가 case B보다 시간상 앞서면 A의 실제 관측 transition은 B의 optional request history에 포함될 수 있다. 단, B 자체와 B 이후의 행동은 절대 입력에 포함하지 않는다. AgentCore bootstrap snapshot은 cutoff 이전으로 고정하며, request의 recent history가 index 지연 없이 최신 관측을 보완한다.
 
 `blind_cases.jsonl`에는 label, oracle, future action이 없어야 한다. `answer_key.jsonl`은 evaluator process가 모델 호출이 종료된 뒤 case ID로 join한다.
 
@@ -347,8 +350,8 @@ Production export에는 반드시 `as-of` timestamp와 HMAC salt가 필요하다
 canonical impressions
   -> timestamp <= as-of
   -> HMAC-SHA256(user_id, session_id)
-  -> record_observations payload
-  -> Neptune user-item interaction edge
+  -> full state/action/next-state record_observations payload
+  -> action별 Neptune user-item interaction edge
 ```
 
 Production manifest는 다음을 명시한다.
@@ -457,7 +460,7 @@ Persona는 장기 성향을 설명하고 `GameStateSnapshot`은 현재 재화, p
 | `uncertainty` | 현재 판단을 뒷받침하는 관측 evidence가 얼마나 부족한가 |
 | `hesitation` | 선호가 있더라도 구매 실행을 미루게 하는 압력이 얼마나 큰가 |
 
-Actor는 `BUY_NOW`, `EXPLORE`, `DEFER`, `REJECT` 네 의도를 비교한다. `DEFER`는 공개 action이 아니라 commitment를 설명하는 내부 상태다. 노출 상태에서는 `SKIP`, 상세 상태에서는 `BACK`으로 매핑한다. Decision process는 LLM 분포를 무제한 덮어쓰지 않고 상태별 total variation `0.15` 이내에서만 조정한다.
+Actor는 `BUY_NOW`, `EXPLORE`, `DEFER`, `REJECT` 네 의도를 비교한다. `DEFER`는 공개 action이 아니라 commitment를 설명하는 내부 상태다. 노출 상태에서는 `SKIP`, 상세 상태에서는 `BACK`, 구매 확인 상태에서는 `CANCEL`로 매핑한다. `BUY_NOW` 의도는 클릭·구매 시작·구매 확정 단계까지 전달된다. Decision process는 LLM 분포를 무제한 덮어쓰지 않고 상태별 total variation `0.08` 이내에서만 조정한다.
 
 Counterfactual validator는 현재 요청의 가상 사본을 Memory에 쓰거나 모델을 다시 학습하지 않는다. 가격 상승, 필요 해소, 긴급성 제거, 비반복 상품의 보유 제약이 구매확률을 올리지 않는지 요청 trace에서만 검사한다.
 
@@ -466,15 +469,34 @@ Action graph는 게임 안에서 관측되는 화면·이벤트 상태와 사용
 ```text
 ITEM_EXPOSURE
   CLICK -> ITEM_DETAIL
-  PURCHASE_NOW -> PURCHASED
+  PURCHASE_NOW -> PURCHASE_CONFIRMATION
   SKIP | EXIT -> EXITED
 
 ITEM_DETAIL
-  PURCHASE -> PURCHASED
-  BACK | EXIT -> EXITED
+  START_PURCHASE -> PURCHASE_CONFIRMATION
+  BACK -> ITEM_EXPOSURE
+
+PURCHASE_CONFIRMATION
+  CONFIRM_PURCHASE -> PAYMENT_PROCESSING
+  CANCEL -> ITEM_DETAIL
+
+PAYMENT_PROCESSING
+  PAYMENT_SUCCESS -> PURCHASED
+  PAYMENT_FAILED -> PURCHASE_CONFIRMATION
+  INSUFFICIENT_CURRENCY -> CURRENCY_SHORTFALL
+
+CURRENCY_SHORTFALL
+  OPEN_TOP_UP -> CURRENCY_TOP_UP
+  BACK_TO_ITEM -> ITEM_DETAIL
+  EXIT -> EXITED
+
+CURRENCY_TOP_UP
+  TOP_UP_SUCCESS -> PURCHASE_CONFIRMATION
+  CANCEL_TOP_UP -> CURRENCY_SHORTFALL
+  EXIT -> EXITED
 ```
 
-게임 상품에는 장바구니 action이 없다고 가정한다. 모델은 action 확률과 사용자 반응만 추론하며 화면, purchase 종료 여부와 허용되지 않은 전이는 코드가 결정한다. `checkout` surface는 `ITEM_DETAIL` 구매 확인 단계에서 시작한다.
+게임 상품에는 장바구니 action이 없다고 가정한다. `COMPARISON`이나 `HESITATE`처럼 telemetry에서 직접 확인할 수 없는 행동도 graph에 넣지 않는다. 기본 UX에서 상세와 구매 확인 화면을 떠나는 행동은 각각 `BACK`, `CANCEL`로 기록하고 store surface 전체 이탈은 노출·잔액·충전 상태의 `EXIT`로 기록한다. 모델은 action 확률과 사용자 반응만 추론하며 화면, purchase 종료 여부와 허용되지 않은 전이는 코드가 결정한다. 반복 전이는 허용하지만 trajectory 열거는 `max_depth=10`으로 제한한다.
 
 이 전이는 Runtime에 분산해서 하드코딩하지 않는다. [`src/purchase_behavior_simulator/action_graphs/game-store-purchase.json`](../src/purchase_behavior_simulator/action_graphs/game-store-purchase.json)의 `transitions`, `terminal_outcomes`, `surface_initial_states`를 actor schema, 확률 정규화와 rollout engine이 함께 사용한다. 새 화면이나 이벤트는 [Action graph 문서](action-graphs.md)의 계약에 따라 추가한다. `action_graphs/`의 JSON은 wheel과 AgentCore CodeZip에 포함된다.
 
@@ -498,7 +520,9 @@ ITEM_DETAIL
 ### 4.1 노드와 관계
 
 ```text
-(:User)-[:VIEWED|CLICKED|PURCHASED]->(:Item)
+(:User)-[:VIEWED|CLICKED|STARTED_PURCHASE|CONFIRMED_PURCHASE
+        |PAYMENT_SUCCEEDED|PAYMENT_FAILED|INSUFFICIENT_CURRENCY
+        |OPENED_TOP_UP|TOPPED_UP|CANCELLED|BACKED|EXITED|SKIPPED]->(:Item)
 (:User)-[:PLAYS]->(:Character)
 (:Item)-[:IN_CATEGORY]->(:Category)
 (:Item)-[:TARGETS]->(:Character)
@@ -506,7 +530,7 @@ ITEM_DETAIL
 (:Item)-[:CONTAINS]->(:Item)
 ```
 
-행동 edge에는 `timestamp`, `sessionId`, `weight`, `synthetic`을 저장한다.
+행동 edge에는 `timestamp`, `sessionId`, `state`, `nextState`, `weight`, `synthetic`을 저장한다. Production export는 관측 경로의 모든 transition을 Memory payload와 Neptune edge에 같은 순서로 보존한다.
 
 ### 4.2 Multi-meta-path retrieval
 
@@ -548,7 +572,7 @@ past interaction bundle contains A
 → component A를 공유하는 관련 evidence
 ```
 
-따라서 신규 bundle 자체의 interaction이 없어도 구성 상품에 대한 사용자의 기존 VIEWED/CLICKED/PURCHASED 행동을 검색할 수 있다.
+따라서 신규 bundle 자체의 interaction이 없어도 구성 상품에 대한 사용자의 기존 노출·상세·구매 시작·결제 결과 행동을 검색할 수 있다.
 
 SimUSER 논문은 별도의 KG confidence 확률을 정의하거나 이를 구매 logit에 직접 곱하지 않는다. 관련 item과 사용자 interaction, KG path를 검색해 LLM Brain의 근거로 제공한다. 현재 구현도 같은 경계를 따른다.
 
@@ -741,13 +765,14 @@ flowchart LR
 
 ### 7.1 State-rich 평가 결과
 
-현재 protocol은 4,000개의 시간순 synthetic impressions에서 20명×25건, 총 500건을 추출한다. 모든 case가 8개 핵심 game-state field를 제공한다. 현재 공식 model-backed 평가는 이 protocol의 200건 prefix를 사용했으며 200/200건을 완료하고 최종 fallback은 0건이었다.
+현재 natural protocol은 4,000개의 시간순 synthetic impressions에서 20명×25건, 총 500건을 추출한다. 모든 case가 8개 핵심 game-state field를 제공하고 request recent history는 최대 16개 transition이다. 전체 데이터에는 28종의 관측 경로와 최대 8단계 경로가 있다. 희소 결제·충전 경로는 별도 path-coverage protocol로 분리한다. 현재 공식 model-backed 평가는 natural protocol의 graph v3 200건 prefix를 사용했으며 200/200건을 완료하고 최종 fallback은 0건이었다.
 
 | 평가 대상 | 생성된 관측 행동 | Simulator 기대 | 차이 |
 | --- | --: | --: | --: |
-| 전체 구매 - scalar probability | 10건 | 15.08건 | +5.08건 |
-| 전체 구매 - trajectory probability | 10건 | 11.80건 | +1.80건 |
-| 노출 후 `CLICK` | 30건 | 40.50건 | +10.50건 |
+| 전체 구매 - scalar probability | 11건 | 11.12건 | +0.12건 |
+| 전체 구매 - trajectory probability | 11건 | 11.97건 | +0.97건 |
+| 노출 상태의 `CLICK` | 30건 | 37.28건 | +7.28건 |
+| 전체 경로 길이 평균 | 1.76단계 | 1.75단계 | -0.01단계 |
 
 평가 정의와 해석 범위는 [평가 문서](evaluation.md)를 따른다.
 

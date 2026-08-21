@@ -9,7 +9,7 @@
 | [getting-started.md](getting-started.md) | 로컬 실행, model 평가, AWS 배포, Memory·Neptune 데이터 초기화 |
 | [architecture.md](architecture.md) | 기술 스택의 역할과 선택 이유, 시스템 경계, 요청 흐름, scoring과 Memory/KG 설계 |
 | [action-graphs.md](action-graphs.md) | 게임별 행동·이벤트 경로 추가와 Runtime 적용 |
-| [evaluation.md](evaluation.md) | 완료된 200건 평가의 action별 관측·기대 건수 차이 |
+| [evaluation.md](evaluation.md) | Graph v3 구매 경로 200건 탐색 평가의 사용자 action별 관측·기대 건수 차이 |
 | [synthetic-data.md](synthetic-data.md) | 가정 기반 game state, scenario/label 격리와 품질 gate |
 | [deployment.md](deployment.md) | AgentCore, Memory, Neptune, evaluator 배포와 E2E 검증 |
 | [code-map.md](code-map.md) | 핵심 코드의 책임과 추천 탐색 순서 |

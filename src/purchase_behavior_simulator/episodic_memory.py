@@ -188,11 +188,27 @@ def transitions_from_observation(
                 )
             )
 
-        clicked = "click" in event_types
-        purchased = "purchase" in event_types
+        clicked = bool({"click", "clicked"} & event_types)
+        purchased = bool(
+            {"purchase", "purchased", "payment_success"} & event_types
+        )
         exited = "exit" in event_types
         if purchased and not clicked:
-            append("ITEM_EXPOSURE", "PURCHASE_NOW", "PURCHASED")
+            append(
+                "ITEM_EXPOSURE",
+                "PURCHASE_NOW",
+                "PURCHASE_CONFIRMATION",
+            )
+            append(
+                "PURCHASE_CONFIRMATION",
+                "CONFIRM_PURCHASE",
+                "PAYMENT_PROCESSING",
+            )
+            append(
+                "PAYMENT_PROCESSING",
+                "PAYMENT_SUCCESS",
+                "PURCHASED",
+            )
             continue
         if not clicked:
             append(
@@ -204,13 +220,29 @@ def transitions_from_observation(
 
         append("ITEM_EXPOSURE", "CLICK", "ITEM_DETAIL")
         if purchased:
-            append("ITEM_DETAIL", "PURCHASE", "PURCHASED")
+            append(
+                "ITEM_DETAIL",
+                "START_PURCHASE",
+                "PURCHASE_CONFIRMATION",
+            )
+            append(
+                "PURCHASE_CONFIRMATION",
+                "CONFIRM_PURCHASE",
+                "PAYMENT_PROCESSING",
+            )
+            append(
+                "PAYMENT_PROCESSING",
+                "PAYMENT_SUCCESS",
+                "PURCHASED",
+            )
         else:
             append(
                 "ITEM_DETAIL",
                 "EXIT" if exited else "BACK",
-                "EXITED",
+                "EXITED" if exited else "ITEM_EXPOSURE",
             )
+            if not exited:
+                append("ITEM_EXPOSURE", "SKIP", "EXITED")
     return tuple(transitions)
 
 
@@ -494,7 +526,13 @@ def memory_document_outcome(document: MemoryDocument) -> str:
         for transition in observed_transitions_from_text(document.content)
     }
     if "purchase" in event_types or transition_actions.intersection(
-        {"PURCHASE", "PURCHASE_NOW"}
+        {
+            "PURCHASE",
+            "PURCHASE_NOW",
+            "START_PURCHASE",
+            "CONFIRM_PURCHASE",
+            "PAYMENT_SUCCESS",
+        }
     ):
         return "purchase"
     if event_types.intersection({"dismiss", "refund", "exit"}) or (

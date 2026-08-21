@@ -6,11 +6,16 @@ import statistics
 from collections import Counter
 from typing import Any, Mapping, Sequence
 
+from .action_rollout import (
+    DEFAULT_ACTION_GRAPH,
+    normalize_action_distributions,
+    rollout_purchase_probability,
+)
 
 EPSILON = 1e-9
 STATE_ACTIONS: Mapping[str, tuple[str, ...]] = {
-    "ITEM_EXPOSURE": ("CLICK", "SKIP", "EXIT", "PURCHASE_NOW"),
-    "ITEM_DETAIL": ("PURCHASE", "BACK", "EXIT"),
+    state: DEFAULT_ACTION_GRAPH.valid_actions(state)
+    for state in DEFAULT_ACTION_GRAPH.states
 }
 
 
@@ -348,91 +353,127 @@ def monte_carlo_binary_f1(
 def evaluate_next_actions(
     rows: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    exposure_labels: list[str] = []
-    exposure_distributions: list[Mapping[str, float]] = []
-    detail_labels: list[str] = []
-    detail_distributions: list[Mapping[str, float]] = []
+    state_labels: dict[str, list[str]] = {
+        state: [] for state in DEFAULT_ACTION_GRAPH.states
+    }
+    state_distributions: dict[str, list[Mapping[str, float]]] = {
+        state: [] for state in DEFAULT_ACTION_GRAPH.states
+    }
+    observed_action_counts: Counter[tuple[str, str]] = Counter()
+    expected_action_counts: Counter[tuple[str, str]] = Counter()
     trajectory_matches: list[bool] = []
     purchase_labels: list[bool] = []
     purchase_predictions: list[bool] = []
     purchase_probabilities: list[float] = []
     trajectory_probabilities: list[float] = []
+    observed_path_lengths: list[int] = []
+    expected_path_lengths: list[float] = []
 
     for row in rows:
         initial_state = str(row["observed_initial_state"])
-        next_action = str(row["observed_next_action"])
-        detail_action = row.get("observed_detail_action")
-        distributions = row["action_distributions"]
-
-        initial_distribution = distributions.get(initial_state, {})
-        initial_prediction = top_action(initial_distribution)
-        trajectory_match = initial_prediction == next_action
-        trajectory_probability = float(
-            initial_distribution.get(next_action, 0.0)
-        )
-        actual_purchase = (
-            next_action in {"PURCHASE", "PURCHASE_NOW"}
-            or detail_action == "PURCHASE"
-        )
-        predicted_purchase = initial_prediction in {"PURCHASE", "PURCHASE_NOW"}
-        predicted_purchase_probability = float(
-            initial_distribution.get("PURCHASE", 0.0)
-            + initial_distribution.get("PURCHASE_NOW", 0.0)
-        )
-
-        if initial_state == "ITEM_EXPOSURE":
-            exposure_labels.append(next_action)
-            exposure_distributions.append(initial_distribution)
-            if detail_action is not None:
-                detail_distribution = distributions.get("ITEM_DETAIL", {})
-                detail_prediction = top_action(detail_distribution)
-                trajectory_probability *= float(
-                    detail_distribution.get(str(detail_action), 0.0)
-                )
-                detail_labels.append(str(detail_action))
-                detail_distributions.append(detail_distribution)
-                trajectory_match = (
-                    trajectory_match and detail_prediction == detail_action
-                )
-                predicted_purchase = (
-                    initial_prediction == "CLICK"
-                    and detail_prediction == "PURCHASE"
-                )
-            predicted_purchase_probability = float(
-                initial_distribution.get("PURCHASE_NOW", 0.0)
-                + initial_distribution.get("CLICK", 0.0)
-                * distributions.get("ITEM_DETAIL", {}).get("PURCHASE", 0.0)
-            )
+        saved_path = row.get("observed_action_path")
+        if saved_path:
+            observed_path = tuple(str(action) for action in saved_path)
         else:
-            detail_labels.append(next_action)
-            detail_distributions.append(initial_distribution)
+            next_action = str(row["observed_next_action"])
+            detail_action = row.get("observed_detail_action")
+            if initial_state == "ITEM_EXPOSURE" and next_action == "CLICK":
+                observed_path = (
+                    "CLICK",
+                    *(
+                        (
+                            "START_PURCHASE",
+                            "CONFIRM_PURCHASE",
+                            "PAYMENT_SUCCESS",
+                        )
+                        if detail_action == "PURCHASE"
+                        else ("BACK", "SKIP")
+                    ),
+                )
+            elif next_action in {"PURCHASE", "PURCHASE_NOW"}:
+                observed_path = (
+                    *(
+                        ("PURCHASE_NOW",)
+                        if initial_state == "ITEM_EXPOSURE"
+                        else ("START_PURCHASE",)
+                    ),
+                    "CONFIRM_PURCHASE",
+                    "PAYMENT_SUCCESS",
+                )
+            else:
+                observed_path = (
+                    next_action,
+                    *(
+                        ("SKIP",)
+                        if initial_state == "ITEM_DETAIL"
+                        and next_action == "BACK"
+                        else ()
+                    ),
+                )
 
-        trajectory_matches.append(trajectory_match)
+        distributions = normalize_action_distributions(
+            row["action_distributions"],
+            graph=DEFAULT_ACTION_GRAPH,
+        )
+        state = initial_state
+        trajectory_probability = 1.0
+        for action in observed_path:
+            if state not in state_labels:
+                raise ValueError(f"unknown observed state: {state}")
+            distribution = distributions[state]
+            if action not in distribution:
+                raise ValueError(f"invalid observed transition: {state}/{action}")
+            state_labels[state].append(action)
+            state_distributions[state].append(distribution)
+            observed_action_counts[(state, action)] += 1
+            trajectory_probability *= float(distribution[action])
+            state = DEFAULT_ACTION_GRAPH.transition(state, action).next_state
+        if not DEFAULT_ACTION_GRAPH.is_terminal(state):
+            raise ValueError("observed action path does not reach a terminal state")
+
+        surface = "checkout" if initial_state == "ITEM_DETAIL" else "store_home"
+        rollout = rollout_purchase_probability(
+            distributions,
+            surface=surface,
+            graph=DEFAULT_ACTION_GRAPH,
+        )
+        top_path = max(rollout.paths, key=lambda path: path.probability)
+        for path in rollout.paths:
+            for path_state, action in zip(path.states[:-1], path.actions):
+                expected_action_counts[(path_state, action)] += path.probability
+
+        actual_purchase = DEFAULT_ACTION_GRAPH.purchased(state)
+        predicted_purchase = top_path.purchased
+        trajectory_matches.append(top_path.actions == observed_path)
         purchase_labels.append(actual_purchase)
         purchase_predictions.append(predicted_purchase)
-        purchase_probabilities.append(predicted_purchase_probability)
+        purchase_probabilities.append(rollout.purchase_probability)
         trajectory_probabilities.append(trajectory_probability)
+        observed_path_lengths.append(len(observed_path))
+        expected_path_lengths.append(
+            sum(path.probability * len(path.actions) for path in rollout.paths)
+        )
 
-    exposure_metrics = multiclass_metrics(
-        exposure_labels,
-        exposure_distributions,
-        actions=STATE_ACTIONS["ITEM_EXPOSURE"],
-    )
-    detail_metrics = multiclass_metrics(
-        detail_labels,
-        detail_distributions,
-        actions=STATE_ACTIONS["ITEM_DETAIL"],
-    )
-    exposure_expected = expected_multiclass_metrics(
-        exposure_labels,
-        exposure_distributions,
-        actions=STATE_ACTIONS["ITEM_EXPOSURE"],
-    )
-    detail_expected = expected_multiclass_metrics(
-        detail_labels,
-        detail_distributions,
-        actions=STATE_ACTIONS["ITEM_DETAIL"],
-    )
+    state_metrics = {
+        state: multiclass_metrics(
+            state_labels[state],
+            state_distributions[state],
+            actions=STATE_ACTIONS[state],
+        )
+        for state in DEFAULT_ACTION_GRAPH.states
+    }
+    state_expected = {
+        state: expected_multiclass_metrics(
+            state_labels[state],
+            state_distributions[state],
+            actions=STATE_ACTIONS[state],
+        )
+        for state in DEFAULT_ACTION_GRAPH.states
+    }
+    exposure_metrics = state_metrics["ITEM_EXPOSURE"]
+    detail_metrics = state_metrics["ITEM_DETAIL"]
+    exposure_expected = state_expected["ITEM_EXPOSURE"]
+    detail_expected = state_expected["ITEM_DETAIL"]
     true_positive = sum(
         label and prediction
         for label, prediction in zip(purchase_labels, purchase_predictions)
@@ -460,6 +501,42 @@ def evaluate_next_actions(
         math.log(max(EPSILON, probability))
         for probability in trajectory_probabilities
     ) / max(1, len(trajectory_probabilities))
+    action_count_gaps = {
+        state: {
+            action: {
+                "observed_count": int(observed_action_counts[(state, action)]),
+                "expected_count": round(
+                    expected_action_counts[(state, action)],
+                    8,
+                ),
+                "count_gap": round(
+                    expected_action_counts[(state, action)]
+                    - observed_action_counts[(state, action)],
+                    8,
+                ),
+            }
+            for action in STATE_ACTIONS[state]
+        }
+        for state in DEFAULT_ACTION_GRAPH.states
+    }
+    user_action_count_gaps = {
+        state: {
+            action: metrics
+            for action, metrics in action_count_gaps[state].items()
+            if DEFAULT_ACTION_GRAPH.transition(state, action).kind
+            == "user_action"
+        }
+        for state in DEFAULT_ACTION_GRAPH.states
+    }
+    environment_event_count_gaps = {
+        state: {
+            action: metrics
+            for action, metrics in action_count_gaps[state].items()
+            if DEFAULT_ACTION_GRAPH.transition(state, action).kind
+            == "environment_event"
+        }
+        for state in DEFAULT_ACTION_GRAPH.states
+    }
     return {
         "cases": len(rows),
         "primary_metrics": {
@@ -494,6 +571,7 @@ def evaluate_next_actions(
         "stochastic_expected": {
             "exposure": exposure_expected,
             "detail": detail_expected,
+            "states": state_expected,
             "terminal_purchase": purchase_expected,
             "terminal_purchase_monte_carlo": monte_carlo_binary_f1(
                 purchase_labels,
@@ -507,10 +585,37 @@ def evaluate_next_actions(
                     8,
                 ),
             },
+            "action_count_gaps": action_count_gaps,
+            "user_action_count_gaps": user_action_count_gaps,
+            "environment_event_count_gaps": environment_event_count_gaps,
+            "path_length": {
+                "observed_mean": round(
+                    statistics.fmean(observed_path_lengths)
+                    if observed_path_lengths
+                    else 0.0,
+                    8,
+                ),
+                "expected_mean": round(
+                    statistics.fmean(expected_path_lengths)
+                    if expected_path_lengths
+                    else 0.0,
+                    8,
+                ),
+                "mean_gap": round(
+                    (
+                        statistics.fmean(expected_path_lengths)
+                        - statistics.fmean(observed_path_lengths)
+                    )
+                    if observed_path_lengths
+                    else 0.0,
+                    8,
+                ),
+            },
         },
         "argmax_diagnostic": {
             "exposure": exposure_metrics,
             "detail": detail_metrics,
+            "states": state_metrics,
             "terminal_purchase": {
                 "count": len(purchase_labels),
                 "positives": sum(purchase_labels),
@@ -563,8 +668,8 @@ def evaluate_next_actions(
             ),
         },
         "limitations": [
-            "Synthetic logs do not distinguish EXIT from SKIP/BACK.",
-            "ITEM_DETAIL metrics use only trajectories that actually reached detail, plus checkout-start cases.",
+            "Only instrumentable UI and transaction events are evaluated.",
+            "State metrics use only paths that actually reached each state.",
             "Oracle probabilities are not used by these action metrics.",
         ],
     }

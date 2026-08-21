@@ -1,13 +1,17 @@
 {
   "graph_id": "game_store_purchase",
-  "version": "1",
+  "version": "3",
   "default_initial_state": "ITEM_EXPOSURE",
   "surface_initial_states": {
     "checkout": "ITEM_DETAIL"
   },
   "state_output_fields": {
     "ITEM_EXPOSURE": "exposure",
-    "ITEM_DETAIL": "detail"
+    "ITEM_DETAIL": "detail",
+    "PURCHASE_CONFIRMATION": "purchase_confirmation",
+    "PAYMENT_PROCESSING": "payment_processing",
+    "CURRENCY_SHORTFALL": "currency_shortfall",
+    "CURRENCY_TOP_UP": "currency_top_up"
   },
   "terminal_outcomes": {
     "PURCHASED": "purchase",
@@ -19,11 +23,56 @@
       "EXIT": 0.02
     },
     "ITEM_DETAIL": {
-      "BACK": 0.98,
-      "EXIT": 0.02
+      "BACK": 1.0
+    },
+    "PURCHASE_CONFIRMATION": {
+      "CANCEL": 1.0
+    },
+    "PAYMENT_PROCESSING": {
+      "PAYMENT_FAILED": 1.0
+    },
+    "CURRENCY_SHORTFALL": {
+      "BACK_TO_ITEM": 0.8,
+      "EXIT": 0.2
+    },
+    "CURRENCY_TOP_UP": {
+      "CANCEL_TOP_UP": 0.8,
+      "EXIT": 0.2
     }
   },
-  "max_depth": 2,
+  "base_distribution_weight": 0.25,
+  "base_distributions": {
+    "ITEM_EXPOSURE": {
+      "CLICK": 0.1461,
+      "SKIP": 0.4689,
+      "EXIT": 0.3832,
+      "PURCHASE_NOW": 0.0018
+    },
+    "ITEM_DETAIL": {
+      "START_PURCHASE": 0.3902,
+      "BACK": 0.6098
+    },
+    "PURCHASE_CONFIRMATION": {
+      "CONFIRM_PURCHASE": 0.5053,
+      "CANCEL": 0.4947
+    },
+    "PAYMENT_PROCESSING": {
+      "PAYMENT_SUCCESS": 0.95,
+      "INSUFFICIENT_CURRENCY": 0.04,
+      "PAYMENT_FAILED": 0.01
+    },
+    "CURRENCY_SHORTFALL": {
+      "OPEN_TOP_UP": 0.3333,
+      "BACK_TO_ITEM": 0.4889,
+      "EXIT": 0.1778
+    },
+    "CURRENCY_TOP_UP": {
+      "TOP_UP_SUCCESS": 0.65,
+      "CANCEL_TOP_UP": 0.3,
+      "EXIT": 0.05
+    }
+  },
+  "max_depth": 10,
   "transitions": [
     {
       "state": "ITEM_EXPOSURE",
@@ -43,20 +92,74 @@
     {
       "state": "ITEM_EXPOSURE",
       "action": "PURCHASE_NOW",
-      "next_state": "PURCHASED"
+      "next_state": "PURCHASE_CONFIRMATION"
     },
     {
       "state": "ITEM_DETAIL",
-      "action": "PURCHASE",
-      "next_state": "PURCHASED"
+      "action": "START_PURCHASE",
+      "next_state": "PURCHASE_CONFIRMATION"
     },
     {
       "state": "ITEM_DETAIL",
       "action": "BACK",
+      "next_state": "ITEM_EXPOSURE"
+    },
+    {
+      "state": "PURCHASE_CONFIRMATION",
+      "action": "CONFIRM_PURCHASE",
+      "next_state": "PAYMENT_PROCESSING"
+    },
+    {
+      "state": "PURCHASE_CONFIRMATION",
+      "action": "CANCEL",
+      "next_state": "ITEM_DETAIL"
+    },
+    {
+      "state": "PAYMENT_PROCESSING",
+      "action": "PAYMENT_SUCCESS",
+      "next_state": "PURCHASED",
+      "kind": "environment_event"
+    },
+    {
+      "state": "PAYMENT_PROCESSING",
+      "action": "INSUFFICIENT_CURRENCY",
+      "next_state": "CURRENCY_SHORTFALL",
+      "kind": "environment_event"
+    },
+    {
+      "state": "PAYMENT_PROCESSING",
+      "action": "PAYMENT_FAILED",
+      "next_state": "PURCHASE_CONFIRMATION",
+      "kind": "environment_event"
+    },
+    {
+      "state": "CURRENCY_SHORTFALL",
+      "action": "OPEN_TOP_UP",
+      "next_state": "CURRENCY_TOP_UP"
+    },
+    {
+      "state": "CURRENCY_SHORTFALL",
+      "action": "BACK_TO_ITEM",
+      "next_state": "ITEM_DETAIL"
+    },
+    {
+      "state": "CURRENCY_SHORTFALL",
+      "action": "EXIT",
       "next_state": "EXITED"
     },
     {
-      "state": "ITEM_DETAIL",
+      "state": "CURRENCY_TOP_UP",
+      "action": "TOP_UP_SUCCESS",
+      "next_state": "PURCHASE_CONFIRMATION",
+      "kind": "environment_event"
+    },
+    {
+      "state": "CURRENCY_TOP_UP",
+      "action": "CANCEL_TOP_UP",
+      "next_state": "CURRENCY_SHORTFALL"
+    },
+    {
+      "state": "CURRENCY_TOP_UP",
       "action": "EXIT",
       "next_state": "EXITED"
     }

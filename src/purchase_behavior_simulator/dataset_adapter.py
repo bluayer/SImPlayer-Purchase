@@ -7,11 +7,12 @@ import json
 import random
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from .action_rollout import DEFAULT_ACTION_GRAPH
 from .evaluation import (
     HoldoutCase,
     HoldoutProtocol,
@@ -21,6 +22,8 @@ from .evaluation import (
 from .models import BehaviorEvent, ProductComponent
 
 
+# Legacy two-step fields remain readable while observed_action_path is the
+# canonical graph-native label.
 EXPOSURE_ACTIONS = frozenset({"CLICK", "SKIP", "EXIT", "PURCHASE_NOW"})
 DETAIL_ACTIONS = frozenset({"PURCHASE", "BACK", "EXIT"})
 EVENT_ACTIONS = frozenset({"IMPRESSION", "CLICK", "PURCHASE", "BACK", "EXIT"})
@@ -41,6 +44,74 @@ GAME_STATE_FIELDS = (
 
 class DatasetValidationError(ValueError):
     pass
+
+
+def build_path_coverage_protocol(
+    protocol: HoldoutProtocol,
+    *,
+    max_cases: int = 100,
+) -> HoldoutProtocol:
+    """Select a deterministic diagnostic suite that favors rare action paths.
+
+    The returned protocol is for path coverage only. Its action frequencies
+    must not be interpreted as a natural traffic distribution.
+    """
+    if max_cases < 1:
+        raise ValueError("max_cases must be positive")
+    if not protocol.cases:
+        raise ValueError("cannot build path coverage from an empty protocol")
+
+    action_counts = Counter(
+        action
+        for case in protocol.cases
+        for action in case.observed_action_path
+    )
+    remaining = sorted(protocol.cases, key=lambda case: case.case_id)
+    selected: list[HoldoutCase] = []
+    covered_actions: set[str] = set()
+    covered_paths: set[tuple[str, ...]] = set()
+
+    while remaining and len(selected) < min(max_cases, len(protocol.cases)):
+        def priority(case: HoldoutCase) -> tuple[float, int, str]:
+            path = tuple(case.observed_action_path)
+            new_actions = len(set(path).difference(covered_actions))
+            new_path = int(path not in covered_paths)
+            rarity = sum(
+                1.0 / max(1, action_counts[action])
+                for action in path
+            )
+            score = 100.0 * new_actions + 25.0 * new_path + rarity
+            return (score, len(path), case.case_id)
+
+        chosen = max(remaining, key=priority)
+        remaining.remove(chosen)
+        selected.append(
+            replace(chosen, ratio_membership=("path_coverage",))
+        )
+        covered_actions.update(chosen.observed_action_path)
+        covered_paths.add(tuple(chosen.observed_action_path))
+
+    source_protocol = dict(
+        protocol.natural_metrics.get("protocol", {})
+    )
+    coverage_metadata = {
+        **source_protocol,
+        "sampling": "rare-path diagnostic coverage",
+        "frequency_metrics_valid": False,
+        "source_run_id": protocol.run_id,
+        "selected_cases": len(selected),
+        "covered_actions": sorted(covered_actions),
+        "covered_path_count": len(covered_paths),
+    }
+    return HoldoutProtocol(
+        run_id=f"{protocol.run_id}-coverage-{len(selected)}",
+        users=len({case.original_user_id for case in selected}),
+        history_fraction=protocol.history_fraction,
+        history_transition_limit=protocol.history_transition_limit,
+        cases=tuple(selected),
+        bootstrap_payloads=protocol.bootstrap_payloads,
+        natural_metrics={"protocol": coverage_metadata},
+    )
 
 
 def _timestamp(value: Any) -> datetime:
@@ -298,6 +369,7 @@ class CanonicalImpression:
     observed_initial_state: str | None = None
     observed_next_action: str | None = None
     observed_detail_action: str | None = None
+    observed_action_path: tuple[str, ...] = ()
     oracle_probability: float | None = None
     attributes: Mapping[str, Any] = field(default_factory=dict)
 
@@ -355,6 +427,70 @@ class CanonicalImpression:
             "PURCHASE_NOW" if self.purchased else "SKIP",
             None,
         )
+
+    def action_path(self) -> tuple[str, tuple[str, ...]]:
+        initial_state = (
+            self.observed_initial_state
+            or ("ITEM_DETAIL" if self.surface == "checkout" else "ITEM_EXPOSURE")
+        ).upper()
+        if self.observed_action_path:
+            actions = tuple(
+                str(action).upper() for action in self.observed_action_path
+            )
+        else:
+            legacy_initial, next_action, detail_action = self.action_labels()
+            initial_state = legacy_initial
+            if initial_state == "ITEM_EXPOSURE" and next_action == "CLICK":
+                actions = (
+                    "CLICK",
+                    *(
+                        (
+                            "START_PURCHASE",
+                            "CONFIRM_PURCHASE",
+                            "PAYMENT_SUCCESS",
+                        )
+                        if detail_action == "PURCHASE"
+                        else ("BACK", "SKIP")
+                    ),
+                )
+            elif next_action in {"PURCHASE", "PURCHASE_NOW"}:
+                actions = (
+                    *(() if initial_state == "ITEM_DETAIL" else ("PURCHASE_NOW",)),
+                    *(("START_PURCHASE",) if initial_state == "ITEM_DETAIL" else ()),
+                    "CONFIRM_PURCHASE",
+                    "PAYMENT_SUCCESS",
+                )
+            else:
+                actions = (
+                    next_action,
+                    *(
+                        ("SKIP",)
+                        if initial_state == "ITEM_DETAIL"
+                        and next_action == "BACK"
+                        else ()
+                    ),
+                )
+        state = initial_state
+        for index, action in enumerate(actions):
+            if DEFAULT_ACTION_GRAPH.is_terminal(state):
+                raise DatasetValidationError(
+                    f"{self.impression_id}: action after terminal state at index {index}"
+                )
+            try:
+                state = DEFAULT_ACTION_GRAPH.transition(
+                    state,
+                    action,
+                ).next_state
+            except ValueError as exc:
+                raise DatasetValidationError(
+                    f"{self.impression_id}: invalid action path at "
+                    f"{state}/{action}"
+                ) from exc
+        if not DEFAULT_ACTION_GRAPH.is_terminal(state):
+            raise DatasetValidationError(
+                f"{self.impression_id}: action path does not reach a terminal state"
+            )
+        return initial_state, actions
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -436,10 +572,14 @@ class CanonicalDataset:
                 raise DatasetValidationError(
                     f"{impression.impression_id}: timestamp must be timezone-aware"
                 )
-            initial, action, detail = impression.action_labels()
-            action_counts[f"{initial}:{action}"] += 1
-            if detail:
-                action_counts[f"ITEM_DETAIL:{detail}"] += 1
+            initial, actions = impression.action_path()
+            state = initial
+            for action in actions:
+                action_counts[f"{state}:{action}"] += 1
+                state = DEFAULT_ACTION_GRAPH.transition(
+                    state,
+                    action,
+                ).next_state
             for field in GAME_STATE_FIELDS:
                 if field in impression.game_state:
                     game_state_coverage[field] += 1
@@ -1028,6 +1168,10 @@ def _canonical_impression(row: Mapping[str, Any]) -> CanonicalImpression:
             if row.get("observed_detail_action")
             else None
         ),
+        observed_action_path=tuple(
+            str(value)
+            for value in row.get("observed_action_path", ())
+        ),
         oracle_probability=_optional_float(
             row.get(
                 "oracle_probability",
@@ -1122,6 +1266,15 @@ def _impression_from_mapped_row(
             if _mapped(row, columns, "observed_detail_action") not in (None, "")
             else None
         ),
+        observed_action_path=tuple(
+            str(value)
+            for value in (
+                _json_or_value(
+                    _mapped(row, columns, "observed_action_path", ())
+                )
+                or ()
+            )
+        ),
         oracle_probability=_optional_float(
             _mapped(row, columns, "oracle_probability")
         ),
@@ -1134,7 +1287,7 @@ class ProtocolBuildConfig:
     selected_users: int | None = 20
     cases_per_user: int | None = 25
     history_fraction: float = 0.5
-    history_limit: int = 50
+    history_limit: int = 16
     seed: int = 20260819
     excluded_user_ids: frozenset[str] = frozenset()
     allow_incomplete_exposure: bool = False
@@ -1244,7 +1397,10 @@ class EvaluationProtocolBuilder:
         for user_id in chosen:
             rows = grouped[user_id]
             cutoff = max(1, int(len(rows) * config.history_fraction))
-            history = rows[max(0, cutoff - config.history_limit) : cutoff]
+            history = self._history_window(
+                rows[:cutoff],
+                config.history_limit,
+            )
             holdout = rows[cutoff:]
             if config.cases_per_user is not None:
                 local_rng = random.Random(  # nosec B311
@@ -1291,6 +1447,33 @@ class EvaluationProtocolBuilder:
                 initial_state, next_action, detail_action = (
                     impression.action_labels()
                 )
+                path_initial_state, observed_action_path = (
+                    impression.action_path()
+                )
+                preceding = [
+                    value
+                    for value in rows
+                    if (
+                        value.timestamp,
+                        value.impression_id,
+                    )
+                    < (
+                        impression.timestamp,
+                        impression.impression_id,
+                    )
+                ]
+                recent_history = self._history_window(
+                    preceding,
+                    config.history_limit,
+                )
+                recent_events = self._history_events(recent_history)
+                recent_transitions = self._transition_payloads(
+                    recent_history,
+                    self.dataset.users[user_id],
+                )
+                recent_purchase_count = sum(
+                    value.purchased for value in recent_history
+                )
                 cases.append(
                     HoldoutCase(
                         case_id=f"{user_id}:{impression.impression_id}",
@@ -1300,9 +1483,10 @@ class EvaluationProtocolBuilder:
                         item_id=impression.item_id,
                         label=int(impression.purchased),
                         oracle_probability=impression.oracle_probability,
-                        observed_initial_state=initial_state,
+                        observed_initial_state=path_initial_state,
                         observed_next_action=next_action,
                         observed_detail_action=detail_action,
+                        observed_action_path=observed_action_path,
                         ratio_membership=("natural",),
                         request={
                             "user": profile,
@@ -1320,15 +1504,31 @@ class EvaluationProtocolBuilder:
                                 "timestamp": impression.timestamp.isoformat(),
                                 "features": dict(
                                     impression.context_features
-                                ),
+                                )
+                                | {
+                                    "recent_history_transition_count": float(
+                                        len(recent_transitions)
+                                    ),
+                                    "recent_history_purchase_count": float(
+                                        recent_purchase_count
+                                    ),
+                                },
                             },
                             "game_state": dict(
                                 impression.game_state
                             ),
-                            "interactions": [],
+                            "interactions": [
+                                {
+                                    "event_type": event.event_type,
+                                    "timestamp": event.timestamp.isoformat(),
+                                    "item_id": event.item_id,
+                                    "categories": list(event.categories),
+                                }
+                                for event in recent_events
+                            ],
                             "kg_evidence": graph_evidence(
                                 target_item=item.to_evaluation_dict(),
-                                events=history_events,
+                                events=recent_events,
                                 items={
                                     key: value.to_evaluation_dict()
                                     for key, value in self.dataset.items.items()
@@ -1349,7 +1549,7 @@ class EvaluationProtocolBuilder:
             run_id=run_id,
             users=len(chosen),
             history_fraction=config.history_fraction,
-            history_impressions_per_user=config.history_limit,
+            history_transition_limit=config.history_limit,
             cases=tuple(cases),
             bootstrap_payloads=tuple(bootstrap_payloads),
             natural_metrics={
@@ -1357,6 +1557,8 @@ class EvaluationProtocolBuilder:
                     "adapter_schema": "simuser.canonical-dataset.v2",
                     "dataset_name": self.dataset.dataset_name,
                     "sampling": "uniform-within-user temporal holdout",
+                    "history_unit": "observed_transitions",
+                    "history_transition_limit": config.history_limit,
                     "cases_per_user": config.cases_per_user,
                     "complete_exposure": self.dataset.complete_exposure,
                     "purchase_rate": round(
@@ -1367,6 +1569,36 @@ class EvaluationProtocolBuilder:
                     "oracle_available": all(
                         case.oracle_probability is not None for case in cases
                     ),
+                    "recent_history": {
+                        "cases_with_prior_purchase": sum(
+                            any(
+                                str(event.get("event_type", "")).lower()
+                                == "purchase"
+                                for event in case.request.get(
+                                    "interactions",
+                                    (),
+                                )
+                            )
+                            for case in cases
+                        ),
+                        "coverage_rate": round(
+                            sum(
+                                any(
+                                    str(
+                                        event.get("event_type", "")
+                                    ).lower()
+                                    == "purchase"
+                                    for event in case.request.get(
+                                        "interactions",
+                                        (),
+                                    )
+                                )
+                                for case in cases
+                            )
+                            / max(1, len(cases)),
+                            8,
+                        ),
+                    },
                     "validation": validation,
                 }
             },
@@ -1394,12 +1626,14 @@ class EvaluationProtocolBuilder:
                 if index < len(grouped[user_id])
             ]
 
-        positives = round_robin(
-            [case for case in cases if case.label == 1]
-        )
-        negatives = round_robin(
-            [case for case in cases if case.label == 0]
-        )
+        def diverse(values: Sequence[HoldoutCase]) -> list[HoldoutCase]:
+            # Keep progressive prefixes distributed across users. Diversity is
+            # measured as a protocol gate rather than reordering one user's
+            # cases ahead of another.
+            return round_robin(values)
+
+        positives = diverse([case for case in cases if case.label == 1])
+        negatives = diverse([case for case in cases if case.label == 0])
         total = len(cases)
         positive_total = len(positives)
         positive_index = 0
@@ -1423,6 +1657,28 @@ class EvaluationProtocolBuilder:
                 positive_index += 1
         return ordered
 
+    @staticmethod
+    def _history_window(
+        impressions: Sequence[CanonicalImpression],
+        transition_limit: int,
+    ) -> list[CanonicalImpression]:
+        if transition_limit < 1:
+            raise DatasetValidationError(
+                "history_limit must be a positive transition count"
+            )
+        selected: list[CanonicalImpression] = []
+        transition_count = 0
+        for impression in reversed(impressions):
+            path_length = len(impression.action_path()[1])
+            if selected and transition_count + path_length > transition_limit:
+                break
+            selected.append(impression)
+            transition_count += path_length
+            if transition_count >= transition_limit:
+                break
+        selected.reverse()
+        return selected
+
     def _history_events(
         self, impressions: Sequence[CanonicalImpression]
     ) -> tuple[BehaviorEvent, ...]:
@@ -1437,26 +1693,19 @@ class EvaluationProtocolBuilder:
                     categories=categories,
                 )
             )
-            if impression.clicked:
+            _, actions = impression.action_path()
+            for offset, action in enumerate(actions, start=1):
+                event_type = {
+                    "CLICK": "click",
+                    "PAYMENT_SUCCESS": "purchase",
+                    "EXIT": "exit",
+                    "SKIP": "dismiss",
+                }.get(action, action.lower())
                 events.append(
                     BehaviorEvent(
-                        event_type="click",
-                        timestamp=(
-                            impression.click_timestamp or impression.timestamp
-                        ),
-                        item_id=impression.item_id,
-                        categories=categories,
-                    )
-                )
-            if impression.purchased:
-                events.append(
-                    BehaviorEvent(
-                        event_type="purchase",
-                        timestamp=(
-                            impression.purchase_timestamp
-                            or impression.click_timestamp
-                            or impression.timestamp
-                        ),
+                        event_type=event_type,
+                        timestamp=impression.timestamp
+                        + timedelta(seconds=offset * 2),
                         item_id=impression.item_id,
                         categories=categories,
                     )
@@ -1520,9 +1769,7 @@ class EvaluationProtocolBuilder:
                 else user.budget_reference
             )
             ratio = item.price / budget if budget and budget > 0.0 else None
-            initial_state, next_action, detail_action = (
-                impression.action_labels()
-            )
+            initial_state, actions = impression.action_path()
 
             def append(
                 state: str,
@@ -1545,42 +1792,23 @@ class EvaluationProtocolBuilder:
                     }
                 )
 
-            if initial_state == "ITEM_DETAIL":
+            state = initial_state
+            for action in actions:
+                transition = DEFAULT_ACTION_GRAPH.transition(state, action)
+                next_state = transition.next_state
                 append(
-                    "ITEM_DETAIL",
-                    next_action,
-                    "PURCHASED" if next_action == "PURCHASE" else "EXITED",
-                    "purchase" if next_action == "PURCHASE" else "no_purchase",
-                )
-                continue
-            if next_action == "CLICK":
-                append(
-                    "ITEM_EXPOSURE",
-                    "CLICK",
-                    "ITEM_DETAIL",
-                    "continued",
-                )
-                append(
-                    "ITEM_DETAIL",
-                    detail_action or "BACK",
-                    (
-                        "PURCHASED"
-                        if detail_action == "PURCHASE"
-                        else "EXITED"
-                    ),
+                    state,
+                    action,
+                    next_state,
                     (
                         "purchase"
-                        if detail_action == "PURCHASE"
+                        if DEFAULT_ACTION_GRAPH.purchased(next_state)
                         else "no_purchase"
+                        if DEFAULT_ACTION_GRAPH.is_terminal(next_state)
+                        else "continued"
                     ),
                 )
-                continue
-            append(
-                "ITEM_EXPOSURE",
-                next_action,
-                "PURCHASED" if next_action == "PURCHASE_NOW" else "EXITED",
-                "purchase" if next_action == "PURCHASE_NOW" else "no_purchase",
-            )
+                state = next_state
         return transitions
 
 
@@ -1858,6 +2086,8 @@ class ProductionExportBuilder:
             timestamp: str = "",
             session_id: str = "",
             weight: float = 1.0,
+            state: str = "",
+            next_state: str = "",
         ) -> None:
             raw = f"{start}|{end}|{relation}|{timestamp}|{session_id}"
             edge_id = hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -1870,6 +2100,8 @@ class ProductionExportBuilder:
                     "timestamp:DateTime": timestamp,
                     "weight:Double": weight,
                     "sessionId:String": session_id,
+                    "state:String": state,
+                    "nextState:String": next_state,
                     "synthetic:Bool": "false",
                 }
             )
@@ -1908,32 +2140,44 @@ class ProductionExportBuilder:
                     session_id=session_id,
                     weight=0.2,
                 )
-                if impression.clicked:
+                state, actions = impression.action_path()
+                for offset, action in enumerate(actions, start=1):
+                    transition = DEFAULT_ACTION_GRAPH.transition(state, action)
                     add(
                         user_node,
                         item_node,
-                        "CLICKED",
+                        action,
                         timestamp=(
-                            impression.click_timestamp
-                            or impression.timestamp
+                            impression.timestamp
+                            + timedelta(seconds=offset * 2)
                         ).isoformat(),
                         session_id=session_id,
-                        weight=0.6,
+                        weight=self._action_edge_weight(action),
+                        state=state,
+                        next_state=transition.next_state,
                     )
-                if impression.purchased:
-                    add(
-                        user_node,
-                        item_node,
-                        "PURCHASED",
-                        timestamp=(
-                            impression.purchase_timestamp
-                            or impression.click_timestamp
-                            or impression.timestamp
-                        ).isoformat(),
-                        session_id=session_id,
-                        weight=1.0,
-                    )
+                    state = transition.next_state
         return edges
+
+    @staticmethod
+    def _action_edge_weight(action: str) -> float:
+        return {
+            "CLICK": 0.20,
+            "START_PURCHASE": 0.45,
+            "CONFIRM_PURCHASE": 0.70,
+            "PAYMENT_SUCCESS": 1.00,
+            "INSUFFICIENT_CURRENCY": 0.35,
+            "OPEN_TOP_UP": 0.55,
+            "TOP_UP_SUCCESS": 0.80,
+            "PAYMENT_FAILED": -0.45,
+            "CANCEL": -0.35,
+            "CANCEL_TOP_UP": -0.45,
+            "BACK": -0.15,
+            "BACK_TO_ITEM": -0.10,
+            "SKIP": -0.25,
+            "EXIT": -0.30,
+            "PURCHASE_NOW": 0.55,
+        }.get(action, 0.0)
 
     @staticmethod
     def _write_neptune_nodes(
@@ -1971,6 +2215,8 @@ class ProductionExportBuilder:
             "timestamp:DateTime",
             "weight:Double",
             "sessionId:String",
+            "state:String",
+            "nextState:String",
             "synthetic:Bool",
         )
         with path.open("w", encoding="utf-8", newline="") as handle:
